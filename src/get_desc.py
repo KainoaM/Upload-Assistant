@@ -2104,6 +2104,9 @@ class DescriptionBuilder:
             description = description.replace("[code]", "[pre]").replace("[/code]", "[/pre]")
 
         if tracker == "DIGITALCORE":
+            # DC's renderer only supports the plain [img] tag; sized [img=N]
+            # renders as nothing, which shipped screenshot-less descriptions
+            description = re.sub(r"\[img=\d+\]", "[img]", description)
             description = description.replace("[user]", "").replace("[/user]", "")
             description = description.replace("[align=left]", "").replace("[/align]", "")
             description = description.replace("[right]", "").replace("[/right]", "")

@@ -274,9 +274,17 @@ class DigitalCore:
                             torrent_id = str(response_data["id"])
                             meta.tracker_status[self.tracker]["torrent_id"] = torrent_id + "/"
                             meta.tracker_status[self.tracker]["status_message"] = response_data.get("message")
-                            await self.common.download_tracker_torrent(
-                                meta, self.tracker, headers=dict(self.session.headers), downurl=f"{self.api_base_url}/download/{torrent_id}"
-                            )
+                            # the site generates the .torrent asynchronously and the
+                            # download endpoint 404s if fetched immediately; without a
+                            # retry the fallback seeds a placeholder announce
+                            torrent_path = f"{meta.base_dir}/tmp/{meta.uuid}/[{self.tracker}].torrent"
+                            for download_attempt in range(4):
+                                await self.common.download_tracker_torrent(
+                                    meta, self.tracker, headers=dict(self.session.headers), downurl=f"{self.api_base_url}/download/{torrent_id}"
+                                )
+                                if await self.common.path_exists(torrent_path):
+                                    break
+                                await asyncio.sleep(10 * (download_attempt + 1))
                             return True
 
                         meta.tracker_status[self.tracker]["status_message"] = f"data error: {response_data.get('message', 'Unknown API error.')}"
