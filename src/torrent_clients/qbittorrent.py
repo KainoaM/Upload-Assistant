@@ -894,7 +894,8 @@ class QbittorrentClientMixin:
             if meta.qbit_tag:
                 tag = meta.qbit_tag
             elif client.get("use_tracker_as_tag", False) and tracker:
-                tag = tracker
+                # tag matches the staging dir name (short codes), falling back to the tracker attr
+                tag = str(self.config["TRACKERS"].get(tracker.upper(), {}).get("link_dir_name", "")).strip() or tracker
             elif client.get("qbit_tag"):
                 tag = client["qbit_tag"]
 
@@ -1479,7 +1480,7 @@ class QbittorrentClientMixin:
                             lambda qbt_client=qbt_client, torrent_hash=torrent.hash: asyncio.to_thread(qbt_client.torrents_trackers, torrent_hash=torrent_hash),
                             f"Get trackers for torrent {torrent.name}",
                         )
-                except TimeoutError, qbittorrentapi.APIError:
+                except (TimeoutError, qbittorrentapi.APIError):
                     logger.debug(f"[yellow]Failed to get trackers for torrent {torrent.name} after retries")
                     continue
                 except Exception as e:
