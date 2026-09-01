@@ -8,6 +8,21 @@ from typing import Any
 from src.console import logger
 from src.meta import Meta
 
+
+IMPORTED_UPLOADER_SIGNATURE_REGEX = re.compile(
+    r"(?:\[code\]\s*\[/code\]\s*)?\[center\](?P<body>(?:[^\[]|\[/?(?:b|i|size|color|url)(?:=[^\]]*)?\])*)\[/center\]",
+    flags=re.IGNORECASE,
+)
+
+
+def _remove_imported_uploader_signature(match: re.Match[str]) -> str:
+    plain_text = re.sub(r"\[/?(?:b|i|size|color|url)(?:=[^\]]*)?\]", "", match.group("body"), flags=re.IGNORECASE).strip()
+    text = plain_text.casefold()
+    attributions = ("uploaded with", "uploaded using", "uploaded by", "powered by", "created by", "created with", "shared with")
+    tools = ("uploader", "upload assistant", "upload-assistant", "uploadrr", "gg-bot", "unit3d")
+    return "" if len(plain_text) < 200 and any(item in text for item in attributions) and any(item in text for item in tools) else match.group(0)
+
+
 # Bold - KEEP
 # Italic - KEEP
 # Underline - KEEP
@@ -415,6 +430,14 @@ class BBCODE:
         # Replace carriage returns with newlines
         desc = desc.replace("\r\n", "\n")
 
+        # ponytail: This is host-based; upgrade to content probing when practical.
+        for comparison in re.findall(r"\[comparison=[\s\S]*?\[/comparison\]", desc, flags=re.IGNORECASE):
+            urls = re.findall(r"https?://[^\s\[\],]+", comparison, flags=re.IGNORECASE)
+            hosts = [(urllib.parse.urlparse(url).hostname or "").lower() for url in urls]
+            dead_hosts = ("ptpimg.me", "imgbox.com")
+            if hosts and all(any(host == dead or host.endswith(f".{dead}") for dead in dead_hosts) for host in hosts):
+                desc = desc.replace(comparison, "")
+
         # Remove links to site
         site_netloc = urllib.parse.urlparse(site).netloc
         site_domain = site_netloc.split(".")[0]
@@ -508,6 +531,7 @@ class BBCODE:
             \[center\]\[url=\/torrents\?perPage=\d+&name=[^\]]*\]\[\/url\]\[\/center\]
         """
         desc = re.sub(bot_signature_regex, "", desc, flags=re.IGNORECASE | re.VERBOSE)
+        desc = IMPORTED_UPLOADER_SIGNATURE_REGEX.sub(_remove_imported_uploader_signature, desc)
         # Remove AITHER internal signature
         desc = re.sub(
             r"\[center\]\[b\]\[size=\d+\]🖌️\[/size\]\[/b\][\s\S]*?This is an internal release which was first released exclusively on Aither\.[\s\S]*?🍻 Cheers to all the Aither.*?\[/center\]",
