@@ -1356,6 +1356,20 @@ class DescriptionBuilder:
             scene_nfo_block = f"[center][spoiler=Scene NFO:][code]{meta.description_nfo_content}[/code][/spoiler][/center]"
             meta_description = meta_description.replace(scene_nfo_block, "").strip()
 
+        spoiler_imported_description = self._get_bool_config("spoiler_imported_description", False)
+        imported_description_spoiler_title = self._get_str_config("imported_description_spoiler_title", "Release Notes")
+
+        def format_imported_description(body: str) -> str:
+            body = self._strip_tonemapped_header(body, meta, replacing=replacing_tonemapped_header)
+            single_spoiler = re.fullmatch(
+                r"\s*\[spoiler(?:=[^\]]*)?\](?:(?!\[/spoiler\]\s*\[spoiler(?:=[^\]]*)?\])[\s\S])*\[/spoiler\]\s*",
+                body,
+                flags=re.IGNORECASE,
+            )
+            if spoiler_imported_description and body.strip() and not single_spoiler:
+                return f"[spoiler={imported_description_spoiler_title}]{body}[/spoiler]"
+            return body
+
         # Description that may come from API requests
         if description:
             # Add FraMeSToR NFO to AITHER
@@ -1378,9 +1392,9 @@ class DescriptionBuilder:
                         flags=re.DOTALL,
                     )
                     if meta_description:
-                        desc_parts.append(self._strip_tonemapped_header(meta_description, meta, replacing=replacing_tonemapped_header))
+                        desc_parts.append(format_imported_description(meta_description))
             elif meta_description:
-                desc_parts.append(self._strip_tonemapped_header(meta_description, meta, replacing=replacing_tonemapped_header))
+                desc_parts.append(format_imported_description(meta_description))
 
         # NFO details
         if nfo:

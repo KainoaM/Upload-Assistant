@@ -327,6 +327,10 @@ config: dict[str, Any] = {
         "screens_per_row": "",
         # Set to True to add the episode overview to the description.
         "episode_overview": True,
+        # Set to True to wrap imported description text in a titled spoiler.
+        "spoiler_imported_description": False,
+        # Title used when imported description text is wrapped in a spoiler.
+        "imported_description_spoiler_title": "Release Notes",
         # --- PACK DESCRIPTIONS ---
         # Number of screenshots to use for each disc or episode in packs on supported sites.
         # Set to 0 to use only the original description and images for later items.
