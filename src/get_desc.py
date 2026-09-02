@@ -2134,6 +2134,8 @@ class DescriptionBuilder:
             # DC's renderer only supports the plain [img] tag; sized [img=N]
             # renders as nothing, which shipped screenshot-less descriptions
             description = re.sub(r"\[img=\d+\]", "[img]", description)
+            # DC's CSP img-src allows img2.ptscreens.com, not img.ptscreens.com
+            description = description.replace("//img.ptscreens.com/", "//img2.ptscreens.com/")
             description = description.replace("[user]", "").replace("[/user]", "")
             description = description.replace("[align=left]", "").replace("[/align]", "")
             description = description.replace("[right]", "").replace("[/right]", "")
