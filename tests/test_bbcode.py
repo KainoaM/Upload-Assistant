@@ -1,7 +1,7 @@
 # ruff: noqa: S101
 import pytest
 
-from src.bbcode import BBCODE, strip_foreign_tracker_links, strip_uploader_signatures
+from src.bbcode import BBCODE, collapse_empty_wrappers, strip_foreign_tracker_links, strip_uploader_signatures
 
 
 UPLOADER_SIGNATURES = [
@@ -160,3 +160,27 @@ def test_clean_unit3d_description_extracts_sized_url_wrapped_images_without_orph
 
     assert len(images) == 12
     assert cleaned.lower().count("[/img]") == cleaned.lower().count("[img")
+
+
+def test_collapse_empty_wrappers_removes_empty_url_pair() -> None:
+    assert collapse_empty_wrappers("Before[url=https://example.test/image.png] \n[/url]After") == "BeforeAfter"
+
+
+def test_collapse_empty_wrappers_removes_nested_empty_comparison() -> None:
+    description = """[center][spoiler=Source vs Encode][center]Source | Encode[/center]
+[url=https://example.test/source.png][/url][url=https://example.test/encode.png] [/url]
+[/spoiler][/center]"""
+
+    assert collapse_empty_wrappers(description) == ""
+
+
+def test_collapse_empty_wrappers_preserves_spoiler_with_text() -> None:
+    description = "[spoiler=MediaInfo][code]Video\nFormat : HEVC[/code][/spoiler]"
+
+    assert collapse_empty_wrappers(description) == description
+
+
+def test_collapse_empty_wrappers_preserves_center_with_image() -> None:
+    description = "[center][img]https://example.test/image.png[/img][/center]"
+
+    assert collapse_empty_wrappers(description) == description
