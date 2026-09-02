@@ -27,6 +27,7 @@ from src.mediainfo import MediaInfo
 from src.meta import Meta
 from src.screenshot_manifest import files as manifest_files
 from src.takescreens import TakeScreensManager
+from src.tracker_descriptions import resolve_description_mode
 from src.tracker_images import get_tracker_image_collection
 from src.trackers.common import Common
 from src.uploadscreens import UploadScreensManager
@@ -331,14 +332,25 @@ class DescriptionBuilder:
                 candidates.add(str(value))
         return tuple(sorted((candidate for candidate in candidates if "[" in candidate), key=lambda candidate: (-len(candidate), candidate)))
 
+    def _imported_images_in_use(self, meta: Meta) -> bool:
+        try:
+            imports_images = resolve_description_mode(meta.tracker_description_mode).imports_images
+        except Exception:
+            return False
+        if not imports_images:
+            return False
+        hosted_images = any(str(image.get("img_url", "")).startswith("http") for image in (meta.image_list or []))
+        return hosted_images and not manifest_files(meta.base_dir, meta.uuid, "main")
+
     def _strip_tonemapped_header(self, text: str, meta: Meta, *, replacing: bool) -> str:
         """Collapse duplicated tonemapped headers in an imported description.
 
         ``clean_unit3d_description`` keeps plain BBCode, so an imported header
-        survives and ``get_tonemapped_header`` may append another. Leave one copy
-        when nothing is re-added, none when it is. One pass over the original text
-        only (re-scanning a splice could eat body text), anchored to whitespace,
-        a bracket or a string edge, loose whitespace between tokens.
+        survives and ``get_tonemapped_header`` may append another. Tracker-imported
+        headers survive only while the imported images are in use; user-supplied
+        descriptions retain one copy when nothing is re-added. One pass over the
+        original text only (re-scanning a splice could eat body text), anchored to
+        whitespace, a bracket or a string edge, loose whitespace between tokens.
         """
         try:
             headers = self._tonemapped_header_candidates(meta)
@@ -347,7 +359,8 @@ class DescriptionBuilder:
             return text
         alternatives = "|".join("(?:" + r"\s*".join(re.escape(token) for token in header.split()) + ")" for header in headers)
         pattern = re.compile(r"(?:^|(?<=[\s\]]))(?:" + alternatives + r")(?=[\s\[]|$)", re.IGNORECASE)
-        keep = 0 if replacing else 1
+        imported = bool(getattr(meta, "description_provenance", None))
+        keep = 0 if replacing or (imported and not self._imported_images_in_use(meta)) else 1
         matches = list(pattern.finditer(text))
         pieces = []
         cursor = 0
