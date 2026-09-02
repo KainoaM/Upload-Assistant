@@ -31,6 +31,116 @@ from src.meta import Meta
 from src.usenetcreate import verify_nzb_has_password
 
 
+def is_screenshot_shape(width: int, height: int, video_width: int, video_height: int) -> bool:
+    if min(width, height, video_width, video_height) <= 0:
+        return True
+    # The 300px/15% limits were measured against 362 imports; the loose AR limit preserves near misses.
+    release_ar = video_width / video_height
+    ar_difference = abs((width / height) - release_ar) / release_ar
+    ntsc_anamorphic = (width, height) == (720, 480) and abs(release_ar - (16 / 9)) / (16 / 9) <= 0.01
+    return width >= 300 and (ar_difference <= 0.15 or ntsc_anamorphic)
+
+
+def _image_dimensions_from_header(data: bytes) -> tuple[int, int] | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        if len(data) < 24 or data[12:16] != b"IHDR":
+            return None
+        width = int.from_bytes(data[16:20], "big")
+        height = int.from_bytes(data[20:24], "big")
+        return (width, height) if width and height else None
+
+    if data.startswith(b"\xff\xd8"):
+        offset = 2
+        while offset < len(data):
+            if data[offset] != 0xFF:
+                return None
+            while offset < len(data) and data[offset] == 0xFF:
+                offset += 1
+            if offset >= len(data):
+                return None
+            marker = data[offset]
+            offset += 1
+            if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+                continue
+            if marker in {0xD9, 0xDA} or offset + 2 > len(data):
+                return None
+            segment_length = int.from_bytes(data[offset : offset + 2], "big")
+            if segment_length < 2 or offset + segment_length > len(data):
+                return None
+            if 0xC0 <= marker <= 0xCF and marker not in {0xC4, 0xC8, 0xCC}:
+                if segment_length < 7:
+                    return None
+                height = int.from_bytes(data[offset + 3 : offset + 5], "big")
+                width = int.from_bytes(data[offset + 5 : offset + 7], "big")
+                return (width, height) if width and height else None
+            offset += segment_length
+        return None
+
+    if data.startswith(b"RIFF") and len(data) >= 20 and data[8:12] == b"WEBP":
+        offset = 12
+        while offset + 8 <= len(data):
+            chunk_type = data[offset : offset + 4]
+            chunk_length = int.from_bytes(data[offset + 4 : offset + 8], "little")
+            payload = offset + 8
+            if chunk_type == b"VP8 " and chunk_length >= 10 and payload + 10 <= len(data) and data[payload + 3 : payload + 6] == b"\x9d\x01\x2a":
+                width = int.from_bytes(data[payload + 6 : payload + 8], "little") & 0x3FFF
+                height = int.from_bytes(data[payload + 8 : payload + 10], "little") & 0x3FFF
+                return (width, height) if width and height else None
+            if chunk_type == b"VP8L" and chunk_length >= 5 and payload + 5 <= len(data) and data[payload] == 0x2F:
+                bits = int.from_bytes(data[payload + 1 : payload + 5], "little")
+                return (1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF))
+            if chunk_type == b"VP8X" and chunk_length >= 10 and payload + 10 <= len(data):
+                width = 1 + int.from_bytes(data[payload + 4 : payload + 7], "little")
+                height = 1 + int.from_bytes(data[payload + 7 : payload + 10], "little")
+                return width, height
+            offset = payload + chunk_length + (chunk_length % 2)
+    return None
+
+
+async def read_image_dimensions(url: str) -> tuple[int, int] | None:
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers={"Range": "bytes=0-65535"}) as response:
+                response.raise_for_status()
+                header = bytearray()
+                async for chunk in response.aiter_bytes():
+                    header.extend(chunk[: 65536 - len(header)])
+                    if len(header) == 65536:
+                        break
+        return _image_dimensions_from_header(bytes(header))
+    except Exception:
+        return None
+
+
+async def filter_imported_screenshots(images: list[dict[str, str]], meta: Meta) -> list[dict[str, str]]:
+    video_width = getattr(meta, "video_width", None)
+    video_height = getattr(meta, "video_height", None)
+    if getattr(meta, "is_disc", False) or not video_width or not video_height:
+        return images
+
+    semaphore = asyncio.Semaphore(4)
+
+    async def keep_image(image: dict[str, str]) -> bool:
+        url = image.get("raw_url") or image.get("img_url")
+        if not url:
+            return True
+        try:
+            async with semaphore, asyncio.timeout(10.0):
+                dimensions = await read_image_dimensions(url)
+        except Exception:
+            dimensions = None
+        if dimensions is None:
+            return True
+        width, height = dimensions
+        if is_screenshot_shape(width, height, video_width, video_height):
+            return True
+        logger.info(f"Dropped imported image {width}x{height}: not screenshot-shaped for a {video_width}x{video_height} release")
+        return False
+
+    keep = await asyncio.gather(*(keep_image(image) for image in images))
+    return [image for image, should_keep in zip(images, keep, strict=True) if should_keep]
+
+
 class Common:
     PORTUGUESE_SUBTITLE_EXTENSIONS: frozenset[str] = frozenset({".ass", ".ssa", ".srt", ".sub", ".vtt"})
     PORTUGUESE_SUBTITLE_WORDS: frozenset[str] = frozenset(
@@ -2757,6 +2867,7 @@ class Common:
                 meta.tracker_description_raw = raw_descriptions
                 bbcode = BBCODE()
                 description, imagelist = bbcode.clean_unit3d_description(description, torrent_url)
+                imagelist = await filter_imported_screenshots(imagelist, meta)
                 if not skip_tracker_descriptions:
                     logger.info(f"[green]Successfully grabbed description from {tracker}")
                     logger.info(f"Extracted description: \n\n{description}\n\n", extra={"markup": False, "highlighter": None})
