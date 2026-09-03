@@ -18,7 +18,7 @@ from src.btnid import BtnIdManager
 from src.console import buffer_console_logs, logger
 from src.meta import Meta
 from src.temp_paths import screenshots_dir
-from src.tracker_descriptions import DescriptionCandidate, add_candidate, description_fingerprint, description_quality, resolve_description_mode, score_release_name
+from src.tracker_descriptions import SEARCH_HIT_MIN_SCORE, DescriptionCandidate, add_candidate, description_fingerprint, description_quality, resolve_description_mode, score_release_name
 from src.trackers.common import Common
 from src.trackersetup import api_trackers
 from src.type_utils import to_int
@@ -275,6 +275,28 @@ async def check_image_link(url: str, timeout: httpx.Timeout | None = None) -> bo
 async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], tracker_name: str, _skip_tracker_descriptions: bool = False) -> bool:
     # Unpack the expected 9 elements, ignoring any additional ones
     tmdb, imdb, tvdb, mal, desc, category, _infohash, imagelist, filename, *_rest = tracker_data
+    tracker_id = meta.get_tracker_id(tracker_name) or ""
+    explicit_id = bool(tracker_id)
+    expected_name = getattr(meta, "tracker_search_term", "")
+    returned_name = str(filename or "")
+    score = score_release_name(expected_name, filename, explicit_id=explicit_id)
+    raw_descriptions = getattr(meta, "tracker_description_raw", {}) or {}
+    raw_description = str(raw_descriptions.get(tracker_name, desc or ""))
+    candidate = DescriptionCandidate(
+        source=tracker_name,
+        release_id=tracker_id,
+        release_name=returned_name,
+        raw_description=raw_description,
+        cleaned_description=str(desc or ""),
+        image_count=len(imagelist or []),
+        score=score,
+    )
+    size_verified = bool((getattr(meta, "tracker_hit_size_verified", {}) or {}).get(tracker_name))
+    if not explicit_id and not size_verified and (not returned_name.strip() or score < SEARCH_HIT_MIN_SCORE):
+        add_candidate(meta, candidate, selected=False)
+        logger.warning(f"[yellow]{tracker_name} search hit rejected: score {score}, expected '{expected_name}', returned '{returned_name}'[/yellow]")
+        return False
+
     if tmdb:
         meta.tmdb_id = tmdb
         logger.debug(f"set TMDB ID: {meta.tmdb_id}")
@@ -290,22 +312,6 @@ async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], 
     mode = resolve_description_mode(meta.tracker_description_mode)
     description_selected = False
     if desc:
-        tracker_id = meta.get_tracker_id(tracker_name) or ""
-        raw_descriptions = getattr(meta, "tracker_description_raw", {}) or {}
-        raw_description = str(raw_descriptions.get(tracker_name, desc))
-        candidate = DescriptionCandidate(
-            source=tracker_name,
-            release_id=tracker_id,
-            release_name=str(filename or ""),
-            raw_description=raw_description,
-            cleaned_description=str(desc),
-            image_count=len(imagelist or []),
-            score=score_release_name(
-                getattr(meta, "tracker_search_term", ""),
-                filename,
-                explicit_id=bool(tracker_id),
-            ),
-        )
         rank = (bool(tracker_id), description_quality(raw_description, candidate.image_count), candidate.score)
         incumbent_rank = getattr(meta, "_description_selection_rank", None)
         description_selected = mode.imports_text and (incumbent_rank is None or rank > incumbent_rank)
@@ -314,7 +320,7 @@ async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], 
             setattr(meta, "_description_selection_rank", rank)
             meta.description = desc
             meta.saved_description = True
-    if category and not meta.manual_category:
+    if explicit_id and category and not meta.manual_category:
         cat_upper = category.upper()
         if "MOVIE" in cat_upper:
             meta.category = "MOVIE"

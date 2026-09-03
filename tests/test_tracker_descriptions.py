@@ -84,6 +84,7 @@ def test_unit3d_candidate_keeps_description_in_memory(tmp_path):
                 "base_dir": str(tmp_path),
                 "uuid": "candidate",
                 "tracker_description_mode": "text",
+                "tracker_search_term": "Release.mkv",
                 "persist_description": False,
             }
         )
