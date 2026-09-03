@@ -33,3 +33,24 @@ def test_english_title_before_aka_agrees():
 
 def test_empty_tracker_name_disagrees():
     assert not release_titles_agree("Gretel.and.Hansel.2020.1080p.mkv", "")
+
+
+def test_a_title_that_is_a_year_still_agrees():
+    # Splitting on the first four-digit year ate these titles entirely, so two identical names
+    # compared as DISAGREE. guessit reads 1917/2012 as the title and the second number as the year.
+    from src.trackers.common import release_titles_agree
+
+    assert release_titles_agree(
+        "1917.2019.1080p.BluRay.x264-GRP.mkv", "1917 2019 1080p BluRay x264-GRP"
+    )
+    assert release_titles_agree(
+        "2012.2009.1080p.BluRay.x264-GRP.mkv", "2012 2009 1080p BluRay x264-GRP"
+    )
+    assert release_titles_agree(
+        "Blade.Runner.2049.2017.2160p.UHD.BluRay.x265-GRP.mkv",
+        "Blade Runner 2049 2017 2160p UHD BluRay x265-GRP",
+    )
+    # and a year-titled film must still not match a different one
+    assert not release_titles_agree(
+        "1917.2019.1080p.BluRay.x264-GRP.mkv", "2012 2009 1080p BluRay x264-GRP"
+    )
