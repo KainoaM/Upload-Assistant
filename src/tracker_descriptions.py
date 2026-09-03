@@ -91,6 +91,32 @@ def score_release_name(search_term: object, release_name: object, *, explicit_id
     return round((sequence * 70) + (overlap * 30))
 
 
+def description_quality(raw_description: str, image_count: int) -> int:
+    """Score substantive prose, using screenshots only as a tiebreaker."""
+    if not isinstance(raw_description, str):
+        raw_description = ""
+    text = re.sub(r"\[img\b[^]]*].*?\[/img]", " ", raw_description, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"(?:https?://|www\.)[^\s\[\]]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[/?[a-z][^]]*]", " ", text, flags=re.IGNORECASE)
+    words = re.findall(r"[^\W_]+(?:['’-][^\W_]+)*", text.casefold())
+    boilerplate = {
+        "assistant",
+        "by",
+        "created",
+        "generated",
+        "powered",
+        "screenshot",
+        "screenshots",
+        "upload",
+        "uploaded",
+        "using",
+        "with",
+    }
+    prose = " ".join(word for word in words if word not in boilerplate)
+    screenshots = max(image_count, 0)
+    return len(prose) * 100 + screenshots
+
+
 def add_candidate(meta: Any, candidate: DescriptionCandidate, *, selected: bool) -> None:
     """Keep an inspectable, credential-free history on the current Meta object."""
     candidates = list(getattr(meta, "description_candidates", []) or [])
