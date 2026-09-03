@@ -10,6 +10,7 @@ import sys
 import unicodedata
 from collections.abc import Callable
 from difflib import SequenceMatcher
+from guessit import guessit
 from pathlib import Path
 from typing import Any, cast
 
@@ -32,32 +33,43 @@ from src.meta import Meta
 from src.usenetcreate import verify_nzb_has_password
 
 
+def _release_title(value: str) -> str:
+    """The title of a release name, per UA's own parser."""
+    try:
+        parsed = guessit(value)
+    except Exception:  # noqa: BLE001 - a parse failure must not block an upload
+        return ""
+    return str(parsed.get("title") or "")
+
+
 def release_titles_agree(our_file_name: str, tracker_release_name: str) -> bool:
     """True when a tracker's record is labelled with the title we are actually uploading.
 
     The file name proves WHICH release a row is; it does not prove the row's metadata is right.
     LST holds Gretel.and.Hansel.2020...-NTG under the ids for "Hansel and Gretel" (TMDb 767526),
     a different 2020 film, and on 2026-09-03 UA adopted those ids and published our upload under
-    that name on four trackers. Compare in ORDER: the two titles contain exactly the same words,
-    so any set or token comparison calls them equal. A tracker listing a translated title as
-    "English AKA Original" agrees on either segment.
+    that name on four trackers.
+
+    Titles come from guessit, the parser UA already uses everywhere else. Splitting on the first
+    four-digit year instead - which is what this did first - breaks on a title that IS a year:
+    1917 (2019) and 2012 (2009) lost their titles entirely and compared as DISAGREE against an
+    identical name. Comparison is ORDER-SENSITIVE because the two Hansel/Gretel titles contain
+    exactly the same words, so any set or token test calls them equal. A tracker listing a
+    translated title as "English AKA Original" agrees on either segment.
     """
     if not our_file_name or not tracker_release_name:
         return False
 
-    year = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-
-    def title(value: str) -> str:
-        return year.split(value, maxsplit=1)[0]
-
     def normalize(value: str) -> str:
         return "".join(character for character in value.lower() if character.isalnum())
 
-    ours = normalize(title(our_file_name))
-    tracker_titles = re.split(r"\s+AKA\s+", title(tracker_release_name), flags=re.IGNORECASE)
-    return bool(ours) and any(
+    ours = normalize(_release_title(our_file_name))
+    if not ours:
+        return False
+    theirs = _release_title(tracker_release_name)
+    return any(
         candidate and SequenceMatcher(None, ours, candidate).ratio() >= 0.75
-        for candidate in (normalize(value) for value in tracker_titles)
+        for candidate in (normalize(segment) for segment in re.split(r"\s+AKA\s+", theirs, flags=re.IGNORECASE))
     )
 
 
