@@ -113,7 +113,22 @@ def _is_imported_signature(candidate: str, *, alignment_block: bool) -> bool:
         if not leading or leading[0].isalnum():
             break
         leading = leading[1:]
-    return bool(_ATTRIBUTION_REGEX.match(leading) or (_ATTRIBUTION_REGEX.search(text) and _TOOL_NAME_REGEX.search(text)))
+    if _ATTRIBUTION_REGEX.match(leading) or (_ATTRIBUTION_REGEX.search(text) and _TOOL_NAME_REGEX.search(text)):
+        return True
+    if not _TOOL_NAME_REGEX.search(text):
+        return False
+    unwrapped = re.sub(
+        r"\[/?(?:center|right|b|i)\]|\[(?:size|color)(?:=[^\]]*)?\]|\[/(?:size|color)\]",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip()
+    tool_link = re.fullmatch(r"\[url=([^\]]+)\]([^\[\]]+)\[/url\]", unwrapped, flags=re.IGNORECASE)
+    return bool(
+        tool_link
+        and _plain_text(tool_link.group(2)).casefold() == text
+        and _host_matches(tool_link.group(1), KNOWN_TRACKER_HOSTS + _CODE_HOSTS)
+    )
 
 
 def _strip_signature_lines(text: str) -> str:
