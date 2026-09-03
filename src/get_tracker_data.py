@@ -21,7 +21,7 @@ from src.btnid import BtnIdManager
 from src.console import logger, prompt_in_thread
 from src.meta import Meta
 from src.metadata_cache import is_cache_miss, tracker_metadata_cache_for
-from src.tracker_descriptions import description_fingerprint
+from src.tracker_descriptions import description_fingerprint, description_quality
 from src.trackermeta import TrackerMetaManager
 from src.trackersetup import tracker_class_map
 
@@ -103,18 +103,30 @@ class TrackerDataManager:
         return str(use_search).lower() == "true"
 
     @staticmethod
-    def _candidate_score(original: Meta, candidate: Meta) -> int:
-        score = 0
+    def _candidate_score(original: Meta, candidate: Meta) -> tuple[int, int, int]:
+        """Rank one tracker's metadata: new IDs, then description SUBSTANCE, then likeness.
+
+        Ordered, not summed. A flat "+10 for having a description" let OnlyEncodes outrank LST
+        on Dexter S01 (2026-09-03) by a couple of points of filename similarity, and we published
+        OE's bare "Personal Release" banner instead of LST's 18,831-char description -
+        description_quality() rates those 1,610 against 257,474. Same ranking shape as the
+        sibling path in trackermeta.py, and the same scoring function, so "better description"
+        means one thing in this codebase rather than two.
+        """
+        ids = 0
         for field in ("tmdb_id", "imdb_id", "tvdb_id", "mal_id"):
             if candidate.get(field) and candidate.get(field) != original.get(field):
-                score += 20
+                ids += 20
+        quality = 0
+        if candidate.description and candidate.description != original.description:
+            raw_map = candidate.get("tracker_description_raw") or {}
+            raw = str(next(iter(raw_map.values()), "") if raw_map else "") or str(candidate.description)
+            quality = description_quality(raw, len(candidate.image_list))
+        likeness = min(len(candidate.image_list), 10)
         provenance = candidate.description_provenance
         if provenance:
-            score += int(provenance.get("score", 0)) + 10
-        if candidate.description and candidate.description != original.description:
-            score += 10
-        score += min(len(candidate.image_list), 10)
-        return score
+            likeness += int(provenance.get("score", 0)) + 10
+        return ids, quality, likeness
 
     async def _collect_explicit_tracker_candidate(
         self,
@@ -188,11 +200,13 @@ class TrackerDataManager:
     ) -> tuple[str, Meta] | None:
         if not candidates:
             return None
-        ranked = sorted(candidates, key=lambda item: (-item[2], item[0]))
+        ranked = sorted(candidates, key=lambda item: item[0])
+        ranked.sort(key=lambda item: item[2], reverse=True)
         if len(ranked) > 1 and not meta.unattended:
             logger.info("[cyan]Tracker metadata candidates:[/cyan]")
             for index, (tracker_name, candidate, score) in enumerate(ranked, start=1):
-                logger.info(f"  {index}. {tracker_name}: score {score}, {candidate.name or candidate.filename}")
+                ids, quality, likeness = score
+                logger.info(f"  {index}. {tracker_name}: ids {ids}, description {quality}, likeness {likeness}, {candidate.name or candidate.filename}")
             choice = await prompt_in_thread(cli_ui.ask_string, f"Choose a tracker candidate [1-{len(ranked)}] (Enter for best): ")
             if choice and choice.strip().isdigit():
                 selected = int(choice.strip()) - 1
