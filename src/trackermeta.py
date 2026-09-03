@@ -18,7 +18,7 @@ from src.btnid import BtnIdManager
 from src.console import buffer_console_logs, logger
 from src.meta import Meta
 from src.temp_paths import screenshots_dir
-from src.tracker_descriptions import DescriptionCandidate, add_candidate, description_fingerprint, resolve_description_mode, score_release_name
+from src.tracker_descriptions import DescriptionCandidate, add_candidate, description_fingerprint, description_quality, resolve_description_mode, score_release_name
 from src.trackers.common import Common
 from src.trackersetup import api_trackers
 from src.type_utils import to_int
@@ -288,6 +288,7 @@ async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], 
         meta.mal_id = mal
         logger.debug(f"set MAL ID: {meta.mal_id}")
     mode = resolve_description_mode(meta.tracker_description_mode)
+    description_selected = False
     if desc:
         tracker_id = meta.get_tracker_id(tracker_name) or ""
         raw_descriptions = getattr(meta, "tracker_description_raw", {}) or {}
@@ -305,10 +306,14 @@ async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], 
                 explicit_id=bool(tracker_id),
             ),
         )
-        add_candidate(meta, candidate, selected=mode.imports_text)
-    if desc and mode.imports_text:
-        meta.description = desc
-        meta.saved_description = True
+        rank = (bool(tracker_id), description_quality(raw_description, candidate.image_count), candidate.score)
+        incumbent_rank = getattr(meta, "_description_selection_rank", None)
+        description_selected = mode.imports_text and (incumbent_rank is None or rank > incumbent_rank)
+        add_candidate(meta, candidate, selected=description_selected)
+        if description_selected:
+            setattr(meta, "_description_selection_rank", rank)
+            meta.description = desc
+            meta.saved_description = True
     if category and not meta.manual_category:
         cat_upper = category.upper()
         if "MOVIE" in cat_upper:
@@ -325,7 +330,7 @@ async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], 
             if meta.image_list and (not meta.tracker_ids or meta.unattended):
                 await handle_image_list(meta, tracker_name, valid_images)
 
-    if desc and mode.imports_text:
+    if description_selected:
         meta.description_fingerprint = description_fingerprint(meta, tracker_name)
 
     if filename:
