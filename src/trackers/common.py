@@ -9,6 +9,7 @@ import secrets
 import sys
 import unicodedata
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +30,35 @@ from src.genre_map import AUDIBLE_ENG_GENRE_MAP, AUDIBLE_PTBR_GENRE_MAP, ENG_TO_
 from src.languages import languages_manager
 from src.meta import Meta
 from src.usenetcreate import verify_nzb_has_password
+
+
+def release_titles_agree(our_file_name: str, tracker_release_name: str) -> bool:
+    """True when a tracker's record is labelled with the title we are actually uploading.
+
+    The file name proves WHICH release a row is; it does not prove the row's metadata is right.
+    LST holds Gretel.and.Hansel.2020...-NTG under the ids for "Hansel and Gretel" (TMDb 767526),
+    a different 2020 film, and on 2026-09-03 UA adopted those ids and published our upload under
+    that name on four trackers. Compare in ORDER: the two titles contain exactly the same words,
+    so any set or token comparison calls them equal. A tracker listing a translated title as
+    "English AKA Original" agrees on either segment.
+    """
+    if not our_file_name or not tracker_release_name:
+        return False
+
+    year = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+
+    def title(value: str) -> str:
+        return year.split(value, maxsplit=1)[0]
+
+    def normalize(value: str) -> str:
+        return "".join(character for character in value.lower() if character.isalnum())
+
+    ours = normalize(title(our_file_name))
+    tracker_titles = re.split(r"\s+AKA\s+", title(tracker_release_name), flags=re.IGNORECASE)
+    return bool(ours) and any(
+        candidate and SequenceMatcher(None, ours, candidate).ratio() >= 0.75
+        for candidate in (normalize(value) for value in tracker_titles)
+    )
 
 
 def rows_matching_release(rows: list[dict[str, Any]], search_name: str, source_size: int, tracker: str) -> list[dict[str, Any]]:
@@ -2739,6 +2769,14 @@ class Common:
                 tvdb = 0 if tvdb == 0 else tvdb
                 mal = 0 if mal == 0 else mal
                 imdb = 0 if imdb == 0 else imdb
+                if file_name:
+                    tracker_release_name = str(attributes.get("name") or "")
+                    if not release_titles_agree(wanted, tracker_release_name):
+                        logger.warning(
+                            f"{tracker}: title mismatch for '{wanted}' versus tracker release "
+                            f"'{tracker_release_name}'; dropped IDs tmdb={tmdb}, imdb={imdb}, tvdb={tvdb}, mal={mal}"
+                        )
+                        tmdb = imdb = tvdb = mal = 0
                 if not meta.region and meta.is_disc in ("BDMV", "DVD"):
                     region_id = attributes.get("region_id")
                     region_name = await region_resolver(region_id) if region_resolver else await self.unit3d_region_ids(reverse=True, region_id=region_id)
