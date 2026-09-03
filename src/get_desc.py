@@ -33,6 +33,13 @@ from src.trackers.common import Common
 from src.uploadscreens import UploadScreensManager
 
 
+def _has_substance(text: str) -> bool:
+    text = re.sub(r"\[[^\]]*\]", "", text)
+    text = re.sub(r"https?://\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^a-z0-9]", "", text, flags=re.IGNORECASE)
+    return bool(text) and re.fullmatch(r"(?:screenshots)+", text, flags=re.IGNORECASE) is None
+
+
 def html_to_bbcode(text: str) -> str:
     """Convert HTML tags to BBCode format."""
     if not text:
@@ -1363,6 +1370,8 @@ class DescriptionBuilder:
 
         def format_imported_description(body: str) -> str:
             body = self._strip_tonemapped_header(body, meta, replacing=replacing_tonemapped_header)
+            if not _has_substance(body):
+                return ""
             single_spoiler = re.fullmatch(
                 r"\s*\[spoiler(?:=[^\]]*)?\](?:(?!\[/spoiler\]\s*\[spoiler(?:=[^\]]*)?\])[\s\S])*\[/spoiler\]\s*",
                 body,
