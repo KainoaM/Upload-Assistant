@@ -31,6 +31,31 @@ from src.meta import Meta
 from src.usenetcreate import verify_nzb_has_password
 
 
+def size_matched_rows(rows: list[dict[str, Any]], source_size: int, tracker: str, tolerance: float = 0.02) -> list[dict[str, Any]]:
+    """Keep only search rows whose byte size matches the file we are uploading.
+
+    A UNIT3D ``file_name`` search returns whatever the site's matcher liked and UA used to take
+    row 0 unconditionally. On 2026-09-03 Blutopia answered a query for a 90 GB 1985 remux with an
+    unrelated TV season, and UA adopted that record's ids: the file was published to three
+    trackers as "Celebrity Masterchef 2006 S01", categorised TV. Byte size is the one field a
+    rename, a translated title or a site naming standard cannot disguise, so it is the gate.
+    An unknown source size returns the rows untouched - the name-score gate still applies.
+    """
+    if not source_size:
+        return rows
+    matched: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            size = int(row.get("attributes", {}).get("size") or 0)
+        except (TypeError, ValueError):
+            continue
+        if size and abs(size - source_size) / source_size <= tolerance:
+            matched.append(row)
+    if not matched:
+        logger.info(f"[yellow]{tracker}: discarded {len(rows)} search hit(s) - none within {tolerance:.0%} of the source size[/yellow]")
+    return matched
+
+
 class Common:
     PORTUGUESE_SUBTITLE_EXTENSIONS: frozenset[str] = frozenset({".ass", ".ssa", ".srt", ".sub", ".vtt"})
     PORTUGUESE_SUBTITLE_WORDS: frozenset[str] = frozenset(
@@ -2684,6 +2709,16 @@ class Common:
                 return None, None, None, None, None, None, None, [], None
 
             if data and isinstance(data, list):  # Ensure data is a list before accessing it
+                if file_name:
+                    # Only a search can hand back a different release; an id lookup cannot.
+                    data = size_matched_rows(data, int(getattr(meta, "source_size", 0) or 0), tracker)
+                    if not data:
+                        return None, None, None, None, None, None, None, [], None
+                    # Size proves identity, so the name-score gate must not veto a tracker that
+                    # renamed or translated the title (e.g. a Korean original listed in English).
+                    verified = dict(getattr(meta, "tracker_hit_size_verified", {}) or {})
+                    verified[tracker] = True
+                    meta.tracker_hit_size_verified = verified
                 attributes = data[0].get("attributes", {})
 
                 # Extract data from the attributes
