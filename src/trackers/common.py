@@ -31,29 +31,39 @@ from src.meta import Meta
 from src.usenetcreate import verify_nzb_has_password
 
 
-def size_matched_rows(rows: list[dict[str, Any]], source_size: int, tracker: str, tolerance: float = 0.02) -> list[dict[str, Any]]:
-    """Keep only search rows whose byte size matches the file we are uploading.
+def rows_matching_release(rows: list[dict[str, Any]], search_name: str, source_size: int, tracker: str) -> list[dict[str, Any]]:
+    """Keep only search rows that are demonstrably the release we are uploading.
 
-    A UNIT3D ``file_name`` search returns whatever the site's matcher liked and UA used to take
-    row 0 unconditionally. On 2026-09-03 Blutopia answered a query for a 90 GB 1985 remux with an
-    unrelated TV season, and UA adopted that record's ids: the file was published to three
-    trackers as "Celebrity Masterchef 2006 S01", categorised TV. Byte size is the one field a
-    rename, a translated title or a site naming standard cannot disguise, so it is the gate.
-    An unknown source size returns the rows untouched - the name-score gate still applies.
+    A UNIT3D ``file_name`` search returns whatever the site's matcher liked, and UA used to take
+    row 0 unconditionally. Blutopia ignores the parameter outright - a query for El Conde came
+    back with Saturday Night Live S35, a Monster House DVD and SNL S36 - and on 2026-09-03 that
+    published a 1985 remux to three trackers as "Celebrity Masterchef 2006 S01", categorised TV.
+
+    The test is exact: does the row contain a file whose name equals ours? Every one of these
+    trackers' rules forbids renaming media files, so the inner file name is a reliable key, and
+    it beats similarity scoring outright - measured the same day, whole-name similarity ranked a
+    wrong hit (64) ABOVE a genuine one (62) because the technical tail and even the group tag
+    matched. Byte size is only the fallback for a response that omits the file list.
     """
-    if not source_size:
-        return rows
-    matched: list[dict[str, Any]] = []
+    wanted = search_name.casefold().strip()
+    sized: list[dict[str, Any]] = []
     for row in rows:
+        attributes = row.get("attributes", {})
+        names = [str(f.get("name", "")).casefold().strip() for f in (attributes.get("files") or [])]
+        if names:
+            if wanted and wanted in names:
+                return [row]
+            continue
+        # No file list to compare, so fall back to the size of what we are uploading.
         try:
-            size = int(row.get("attributes", {}).get("size") or 0)
+            size = int(attributes.get("size") or 0)
         except (TypeError, ValueError):
             continue
-        if size and abs(size - source_size) / source_size <= tolerance:
-            matched.append(row)
-    if not matched:
-        logger.info(f"[yellow]{tracker}: discarded {len(rows)} search hit(s) - none within {tolerance:.0%} of the source size[/yellow]")
-    return matched
+        if source_size and size and abs(size - source_size) / source_size <= 0.02:
+            sized.append(row)
+    if not sized:
+        logger.info(f"[yellow]{tracker}: discarded {len(rows)} search hit(s) - none contains '{search_name}'[/yellow]")
+    return sized
 
 
 class Common:
@@ -2711,14 +2721,10 @@ class Common:
             if data and isinstance(data, list):  # Ensure data is a list before accessing it
                 if file_name:
                     # Only a search can hand back a different release; an id lookup cannot.
-                    data = size_matched_rows(data, int(getattr(meta, "source_size", 0) or 0), tracker)
+                    wanted = file_name if isinstance(file_name, str) else (file_name[0] if file_name else "")
+                    data = rows_matching_release(data, str(wanted), int(getattr(meta, "source_size", 0) or 0), tracker)
                     if not data:
                         return None, None, None, None, None, None, None, [], None
-                    # Size proves identity, so the name-score gate must not veto a tracker that
-                    # renamed or translated the title (e.g. a Korean original listed in English).
-                    verified = dict(getattr(meta, "tracker_hit_size_verified", {}) or {})
-                    verified[tracker] = True
-                    meta.tracker_hit_size_verified = verified
                 attributes = data[0].get("attributes", {})
 
                 # Extract data from the attributes

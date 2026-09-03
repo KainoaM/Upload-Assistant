@@ -18,7 +18,7 @@ from src.btnid import BtnIdManager
 from src.console import buffer_console_logs, logger
 from src.meta import Meta
 from src.temp_paths import screenshots_dir
-from src.tracker_descriptions import SEARCH_HIT_MIN_SCORE, DescriptionCandidate, add_candidate, description_fingerprint, description_quality, resolve_description_mode, score_release_name
+from src.tracker_descriptions import DescriptionCandidate, add_candidate, description_fingerprint, description_quality, resolve_description_mode, score_release_name
 from src.trackers.common import Common
 from src.trackersetup import api_trackers
 from src.type_utils import to_int
@@ -291,10 +291,12 @@ async def update_meta_with_unit3d_data(meta: Meta, tracker_data: Sequence[Any], 
         image_count=len(imagelist or []),
         score=score,
     )
-    size_verified = bool((getattr(meta, "tracker_hit_size_verified", {}) or {}).get(tracker_name))
-    if not explicit_id and not size_verified and (not returned_name.strip() or score < SEARCH_HIT_MIN_SCORE):
+    # The search itself now only returns a row that contains our exact file name
+    # (src/trackers/common.py: rows_matching_release), so a hit that arrives here is the right
+    # release. An empty returned name means nothing was verifiable, so it is still refused.
+    if not explicit_id and not returned_name.strip():
         add_candidate(meta, candidate, selected=False)
-        logger.warning(f"[yellow]{tracker_name} search hit rejected: score {score}, expected '{expected_name}', returned '{returned_name}'[/yellow]")
+        logger.warning(f"[yellow]{tracker_name} search hit rejected - no release name returned[/yellow]")
         return False
 
     if tmdb:

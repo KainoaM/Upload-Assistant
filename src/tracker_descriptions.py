@@ -11,9 +11,6 @@ from enum import StrEnum
 from typing import Any
 
 
-SEARCH_HIT_MIN_SCORE = 60
-
-
 class TrackerDescriptionMode(StrEnum):
     """The parts of a tracker release that may be imported."""
 
