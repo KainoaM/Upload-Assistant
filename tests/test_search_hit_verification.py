@@ -6,7 +6,10 @@ from src.meta import Meta
 from src.trackermeta import update_meta_with_unit3d_data
 
 
-def test_unrelated_search_hit_is_rejected_without_adopting_metadata():
+def test_unverifiable_search_hit_is_rejected_without_adopting_metadata():
+    # An unrelated release can no longer reach this function: the search layer only returns a
+    # row containing our exact file name (src/trackers/common.py: rows_matching_release), which
+    # covers BOTH adoption paths. What is left to pin here is a hit with nothing verifiable.
     async def run():
         meta = Meta(
             {
@@ -26,7 +29,7 @@ def test_unrelated_search_hit_is_rejected_without_adopting_metadata():
             "TV",
             None,
             [{"raw_url": "https://example.com/wrong.jpg"}],
-            "Celebrity Masterchef 2006 S01 2160p UHD BluRay REMUX DV HDR HEVC MULTI DTS-HD MA 5.1-FraMeSToR",
+            "",  # no release name: nothing to verify, so nothing may be adopted
         )
 
         assert not await update_meta_with_unit3d_data(meta, result, "BLUTOPIA")
