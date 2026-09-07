@@ -102,6 +102,7 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "tracker_description_mode": (str,),
     "tracker_search_concurrency": (str, int),
     "tracker_comment_only": (bool,),
+    "tracker_id_search_only": (list, str),
     "use_sonarr": (bool,),
     "use_radarr": (bool,),
     "mkbrr": (bool,),

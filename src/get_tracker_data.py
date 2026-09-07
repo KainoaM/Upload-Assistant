@@ -103,7 +103,7 @@ class TrackerDataManager:
         return str(use_search).lower() == "true"
 
     @staticmethod
-    def _candidate_score(original: Meta, candidate: Meta) -> tuple[int, int, int]:
+    def _candidate_score(original: Meta, candidate: Meta, tracker_name: str) -> tuple[int, int, int]:
         """Rank one tracker's metadata: new IDs, then description SUBSTANCE, then likeness.
 
         Ordered, not summed. A flat "+10 for having a description" let OnlyEncodes outrank LST
@@ -119,8 +119,11 @@ class TrackerDataManager:
                 ids += 20
         quality = 0
         if candidate.description and candidate.description != original.description:
+            # Keyed by tracker, not "whatever is first": the candidate is a COPY of the live
+            # Meta, so this map can already hold another tracker's text. Same lookup as
+            # trackermeta.py's sibling path.
             raw_map = candidate.get("tracker_description_raw") or {}
-            raw = str(next(iter(raw_map.values()), "") if raw_map else "") or str(candidate.description)
+            raw = str(raw_map.get(tracker_name) or candidate.description)
             quality = description_quality(raw, len(candidate.image_list))
         likeness = min(len(candidate.image_list), 10)
         provenance = candidate.description_provenance
@@ -135,7 +138,7 @@ class TrackerDataManager:
         search_term: str,
         search_file_folder: str,
         skip_tracker_descriptions: bool,
-    ) -> tuple[str, Meta, int] | None:
+    ) -> tuple[str, Meta, tuple[int, int, int]] | None:
         """Fetch one candidate without allowing it to mutate the live release."""
         candidate = meta.copy()
         candidate.uuid = f"{meta.uuid}-candidate-{tracker_name.lower()}-{uuid.uuid4().hex}"
@@ -159,7 +162,7 @@ class TrackerDataManager:
                     return None
                 candidate.imdb_id = imdb or candidate.imdb_id
                 candidate.tvdb_id = tvdb or candidate.tvdb_id
-                return tracker_name, candidate, self._candidate_score(meta, candidate)
+                return tracker_name, candidate, self._candidate_score(meta, candidate, tracker_name)
 
             if tracker_name == "ANTHELION":
                 data = await tracker_class_map[tracker_name](config=self.config).get_data_from_files(candidate)
@@ -167,7 +170,7 @@ class TrackerDataManager:
                     return None
                 for values in data:
                     candidate.update(values)
-                return tracker_name, candidate, self._candidate_score(meta, candidate)
+                return tracker_name, candidate, self._candidate_score(meta, candidate, tracker_name)
 
             factory = tracker_class_map.get(tracker_name)
             if factory is None:
@@ -183,7 +186,7 @@ class TrackerDataManager:
             )
             if not match:
                 return None
-            return tracker_name, candidate, self._candidate_score(meta, candidate)
+            return tracker_name, candidate, self._candidate_score(meta, candidate, tracker_name)
         except (httpx.ConnectError, requests.exceptions.ConnectionError) as error:
             logger.info(f"{tracker_name} tracker request failed due to connection error: {error}", extra={"markup": False})
             return None
@@ -196,7 +199,7 @@ class TrackerDataManager:
     async def _choose_explicit_tracker_candidate(
         self,
         meta: Meta,
-        candidates: list[tuple[str, Meta, int]],
+        candidates: list[tuple[str, Meta, tuple[int, int, int]]],
     ) -> tuple[str, Meta] | None:
         if not candidates:
             return None
@@ -254,6 +257,66 @@ class TrackerDataManager:
             candidate.description = ""
             candidate.saved_description = False
             candidate.description_provenance = {**candidate.description_provenance, "discarded": True}
+
+    async def _search_tracker_candidates(
+        self,
+        meta: Meta,
+        trackers: list[str],
+        base_dir: str,
+        search_term: str,
+        search_file_folder: str,
+        skip_tracker_descriptions: bool,
+    ) -> bool:
+        """Rank all matches so Pulse.2001.REPACK.UHD.BluRay.Remux selects ULCX's
+        5,384-character description instead of stopping at LST's screenshot-only listing.
+        """
+        trackers = list(trackers)
+        if meta.is_disc and "ANTHELION" in trackers:
+            trackers.remove("ANTHELION")
+        if meta.category == "MOVIE" and "BROADCASTHENET" in trackers:
+            trackers.remove("BROADCASTHENET")
+        if not trackers:
+            return False
+
+        available_trackers, waiting_trackers = await self.get_available_trackers(trackers, base_dir, debug=meta.debug)
+        if waiting_trackers and not available_trackers:
+            wait_time = max(wait for _tracker, wait in waiting_trackers)
+            waiting_names = ", ".join(f"{tracker} ({wait:.1f}s)" for tracker, wait in waiting_trackers)
+            logger.info(f"[yellow]Waiting for tracker metadata candidate cooldowns: {waiting_names}[/yellow]")
+            await asyncio.sleep(wait_time)
+            available_trackers, waiting_trackers = await self.get_available_trackers(trackers, base_dir, debug=meta.debug)
+            if waiting_trackers:
+                logger.warning("[yellow]Some tracker metadata candidates remain in cooldown and will not be queried.[/yellow]")
+
+        search_limit = self.default_config.get("tracker_search_concurrency", 4)
+        try:
+            semaphore = asyncio.Semaphore(max(1, int(search_limit)))
+        except TypeError, ValueError:
+            semaphore = asyncio.Semaphore(4)
+
+        async def collect(tracker_name: str) -> tuple[str, Meta, tuple[int, int, int]] | None:
+            async with semaphore:
+                return await self._collect_explicit_tracker_candidate(
+                    tracker_name,
+                    meta,
+                    search_term,
+                    search_file_folder,
+                    skip_tracker_descriptions,
+                )
+
+        results = await asyncio.gather(*(collect(tracker_name) for tracker_name in available_trackers))
+        candidates = [result for result in results if result is not None]
+        for tracker_name in available_trackers:
+            await self.save_tracker_timestamp(tracker_name, base_dir=base_dir)
+
+        selected_candidate = await self._choose_explicit_tracker_candidate(meta, candidates)
+        if selected_candidate:
+            tracker_name, candidate_meta = selected_candidate
+            await self._review_explicit_tracker_description(meta, tracker_name, candidate_meta)
+            await self._apply_explicit_tracker_candidate(meta, tracker_name, candidate_meta)
+            logger.debug(f"[green]Selected tracker metadata candidate: {tracker_name}[/green]")
+            return True
+        return False
 
     async def get_tracker_timestamps(self, base_dir: str | None = None) -> dict[str, float]:
         """Get tracker timestamps from the log file"""
@@ -319,7 +382,12 @@ class TrackerDataManager:
         cat: str | None = None,
         skip_tracker_descriptions: bool = False,
     ) -> Meta:
-        found_match = False
+        """Both search paths rank every candidate; neither stops at the first tracker that answers.
+
+        DEFAULT.tracker_id_search_only names trackers the filename path must skip - BLUTOPIA
+        answers by-ID lookups correctly but ignores the filename parameter and returns
+        unrelated releases.
+        """
         base_dir = meta.base_dir
         search_term_value = search_term or ""
         search_file_folder_value = search_file_folder or ""
@@ -342,6 +410,9 @@ class TrackerDataManager:
             logger.debug(f"[blue]Specific trackers to check: {specific_tracker}[/blue]")
 
             if specific_tracker:
+                # Before the meta.trackers bookkeeping below, which drops from the UPLOAD list
+                # anything it also drops from the search list: leaving ANTHELION here would
+                # un-target a disc upload that happened to be found by its own comment id.
                 if meta.is_disc and "ANTHELION" in specific_tracker:
                     specific_tracker.remove("ANTHELION")
                 if meta.category == "MOVIE" and "BROADCASTHENET" in specific_tracker:
@@ -370,44 +441,14 @@ class TrackerDataManager:
                 else:
                     meta.trackers = []
 
-                available_trackers, waiting_trackers = await self.get_available_trackers(specific_tracker, base_dir, debug=meta.debug)
-                if waiting_trackers and not available_trackers:
-                    wait_time = max(wait for _tracker, wait in waiting_trackers)
-                    waiting_names = ", ".join(f"{tracker} ({wait:.1f}s)" for tracker, wait in waiting_trackers)
-                    logger.info(f"[yellow]Waiting for tracker metadata candidate cooldowns: {waiting_names}[/yellow]")
-                    await asyncio.sleep(wait_time)
-                    available_trackers, waiting_trackers = await self.get_available_trackers(specific_tracker, base_dir, debug=meta.debug)
-                    if waiting_trackers:
-                        logger.warning("[yellow]Some tracker metadata candidates remain in cooldown and will not be queried.[/yellow]")
-
-                search_limit = self.default_config.get("tracker_search_concurrency", 4)
-                try:
-                    semaphore = asyncio.Semaphore(max(1, int(search_limit)))
-                except TypeError, ValueError:
-                    semaphore = asyncio.Semaphore(4)
-
-                async def collect(tracker_name: str) -> tuple[str, Meta, int] | None:
-                    async with semaphore:
-                        return await self._collect_explicit_tracker_candidate(
-                            tracker_name,
-                            meta,
-                            search_term_value,
-                            search_file_folder_value,
-                            skip_tracker_descriptions,
-                        )
-
-                results = await asyncio.gather(*(collect(tracker_name) for tracker_name in available_trackers))
-                candidates = [result for result in results if result is not None]
-                for tracker_name in available_trackers:
-                    await self.save_tracker_timestamp(tracker_name, base_dir=base_dir)
-
-                selected_candidate = await self._choose_explicit_tracker_candidate(meta, candidates)
-                if selected_candidate:
-                    tracker_name, candidate_meta = selected_candidate
-                    await self._review_explicit_tracker_description(meta, tracker_name, candidate_meta)
-                    await self._apply_explicit_tracker_candidate(meta, tracker_name, candidate_meta)
-                    found_match = True
-                    logger.debug(f"[green]Selected tracker metadata candidate: {tracker_name}[/green]")
+                found_match = await self._search_tracker_candidates(
+                    meta,
+                    specific_tracker,
+                    base_dir,
+                    search_term_value,
+                    search_file_folder_value,
+                    skip_tracker_descriptions,
+                )
 
                 if found_match:
                     logger.debug(f"[green]Successfully found match using tracker: {(meta.matched_tracker if meta.matched_tracker is not None else 'Unknown')}[/green]")
@@ -429,37 +470,28 @@ class TrackerDataManager:
                     logger.debug("[yellow]Detected TV content, skipping PASSTHEPOPCORN tracker check")
                     tracker_order = [tracker for tracker in tracker_order if tracker != "PASSTHEPOPCORN"]
 
-                async def process_tracker(tracker_name: str, meta: Meta, skip_tracker_descriptions: bool) -> Meta:
-                    nonlocal found_match
-                    tracker_factory = tracker_class_map.get(tracker_name)
-                    if tracker_factory is None:
-                        logger.info(f"[red]Tracker class for {tracker_name} not found.[/red]")
-                        return meta
+                search_trackers = [tracker for tracker in tracker_order if self._search_enabled(tracker)]
+                id_search_only_config = self.default_config.get("tracker_id_search_only", [])
+                if isinstance(id_search_only_config, str):
+                    id_search_only_values = id_search_only_config.split(",")
+                else:
+                    id_search_only_values = id_search_only_config or []
+                id_search_only = {str(tracker).strip().upper() for tracker in id_search_only_values}
+                dropped_trackers = [tracker for tracker in search_trackers if str(tracker).upper() in id_search_only]
+                if dropped_trackers:
+                    logger.debug(
+                        f"[yellow]Skipping filename metadata search for ID-only trackers that ignore filename parameters: {', '.join(dropped_trackers)}[/yellow]"
+                    )
+                search_trackers = [tracker for tracker in search_trackers if str(tracker).upper() not in id_search_only]
 
-                    tracker_instance = tracker_factory(config=self.config)
-                    try:
-                        updated_meta, match = await self.update_metadata_from_explicit_tracker(
-                            tracker_name,
-                            tracker_instance,
-                            meta,
-                            search_term_value,
-                            search_file_folder_value,
-                            skip_tracker_descriptions,
-                        )
-                        if match:
-                            found_match = True
-                            logger.debug(f"[green]Match found on tracker: {tracker_name}[/green]")
-                            meta.matched_tracker = tracker_name
-                        return updated_meta
-                    except httpx.ConnectError:
-                        logger.info(f"{tracker_name} tracker request failed due to SSL/Connection error.", extra={"markup": False})
-                    except requests.exceptions.ConnectionError as conn_err:
-                        logger.info(f"{tracker_name} tracker request failed due to connection error: {conn_err}", extra={"markup": False})
-                    return meta
-
-                for tracker_name in tracker_order:
-                    if not found_match and self._search_enabled(tracker_name):  # Stop checking once a match is found
-                        meta = await process_tracker(tracker_name, meta, skip_tracker_descriptions)
+                found_match = await self._search_tracker_candidates(
+                    meta,
+                    search_trackers,
+                    base_dir,
+                    search_term_value,
+                    search_file_folder_value,
+                    skip_tracker_descriptions,
+                )
 
                 if not found_match:
                     meta.no_tracker_match = True

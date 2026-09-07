@@ -30,8 +30,8 @@ def test_substance_beats_a_closer_filename() -> None:
     lst = _candidate("LST", LST_DESCRIPTION, images=10, name_score=62)
     oe = _candidate("ONLYENCODES", OE_DESCRIPTION, images=10, name_score=100)
 
-    lst_score = TrackerDataManager._candidate_score(original, lst)
-    oe_score = TrackerDataManager._candidate_score(original, oe)
+    lst_score = TrackerDataManager._candidate_score(original, lst, "LST")
+    oe_score = TrackerDataManager._candidate_score(original, oe, "ONLYENCODES")
 
     assert lst_score > oe_score, f"thin description won: LST {lst_score} vs OE {oe_score}"
     # Ranked on substance, not summed away by the likeness terms.
@@ -43,4 +43,4 @@ def test_no_description_loses_to_any_description() -> None:
     original = Meta()
     empty = _candidate("ULCX", "", images=10, name_score=100)
     lst = _candidate("LST", LST_DESCRIPTION, images=0, name_score=1)
-    assert TrackerDataManager._candidate_score(original, lst) > TrackerDataManager._candidate_score(original, empty)
+    assert TrackerDataManager._candidate_score(original, lst, "LST") > TrackerDataManager._candidate_score(original, empty, "ULCX")
