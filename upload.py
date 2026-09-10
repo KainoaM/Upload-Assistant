@@ -91,7 +91,7 @@ from src.trackerhandle import process_trackers
 from src.trackers.alpharatio import AlphaRatio
 from src.trackers.common import Common
 from src.trackers.passthepopcorn import PassThePopcorn
-from src.trackersetup import TrackerSetup, api_trackers, http_trackers, other_api_trackers, tracker_class_map
+from src.trackersetup import TrackerSetup, api_trackers, get_book_required_fields, http_trackers, other_api_trackers, tracker_class_map
 from src.trackerstatus import TrackerStatusManager
 from src.tvdb import close_tvdb
 from src.uphelper import UploadHelper
@@ -555,13 +555,13 @@ async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None =
 
 
 async def _prompt_book_meta(meta: Meta) -> bool:
-    """Prompt the user to fill in missing BOOK metadata fields (title, author, year, language).
+    """Prompt the user to fill in BOOK metadata required by the selected trackers.
 
     Runs only in interactive (attended) mode.  When any field is filled in the
     torrent name is rebuilt so the confirmation screen and the per-tracker
     uploads reflect the new values. Returns False when input reaches EOF.
     """
-    book_required_fields = ["title", "author", "year", "book_language"]
+    book_required_fields = list(dict.fromkeys(field for tracker in meta.trackers or [""] for field in get_book_required_fields(tracker)))
     if meta.audiobook and ("CAPYBARABR" in meta.trackers or "ZENITH" in meta.trackers):
         book_required_fields.append("narrator")
     book_missing: list[str] = []
@@ -1230,8 +1230,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         await f.write(json.dumps(meta.to_dict(), indent=4, cls=PathAwareEncoder))
     _publish_webui_preview_target(cast(str, meta.path or ""), meta.uuid or None)
 
-    # For BOOK category, certain trackers (e.g. CAPYBARABR) require title, author, year and language.
-    # Prompt here - on the shared meta - so the data flows into every tracker's upload
+    # Prompt for the selected trackers' BOOK requirements on the shared meta so the data flows into every tracker's upload
     # and into get_name (which runs again below if any field was filled in).
     if meta.category == "BOOK":
         if not await _ensure_valid_book_artwork(meta):

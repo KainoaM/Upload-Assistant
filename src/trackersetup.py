@@ -1499,6 +1499,11 @@ tracker_class_map: Any = LazyTrackerDict(
 )
 
 
+def get_book_required_fields(tracker_name: str) -> tuple[str, ...]:
+    """Read the tracker's BOOK requirements, preserving the default for trackers without a declaration."""
+    return getattr(tracker_class_map.get(tracker_name), "book_required_fields", ("title", "author", "year", "book_language"))
+
+
 def get_tracker_comment_hosts(config: dict[str, Any]) -> dict[str, tuple[str, ...]]:
     """Return tracker domains usable when parsing torrent-comment URLs.
 

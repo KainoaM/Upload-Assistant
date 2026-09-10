@@ -15,7 +15,7 @@ from src.meta import Meta
 from src.metadata_searching import get_douban_id
 from src.trackers.AVISTAZ.routing import AvistaZNetworkRouter
 from src.trackers.passthepopcorn import PassThePopcorn
-from src.trackersetup import TrackerSetup, tracker_class_map
+from src.trackersetup import TrackerSetup, get_book_required_fields, tracker_class_map
 from src.uphelper import UploadHelper
 
 
@@ -124,9 +124,8 @@ class TrackerStatusManager:
                 if local_meta.get("category") == "BOOK" and local_meta.get("unattended", False):
                     from src.book_prep import is_valid_book_language
 
-                    book_required_fields = ["title", "author", "year", "book_language"]
                     book_missing: list[str] = []
-                    for f in book_required_fields:
+                    for f in get_book_required_fields(tracker_name):
                         val = local_meta.get(f)
                         if not val or str(val).strip().lower() in ("", "none", "null"):
                             book_missing.append(f)

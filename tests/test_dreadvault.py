@@ -1,10 +1,12 @@
 import asyncio
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from src.meta import _TRACKER_ID_ALIASES, Meta
 from src.trackers.UNIT3D.dreadvault import DreadVault
 from src.trackersetup import TrackerSetup, tracker_class_map
+from src.trackerstatus import TrackerStatusManager
 
 
 def _tracker() -> DreadVault:
@@ -112,6 +114,61 @@ def test_dreadvault_rejects_adult_content():
     tracker = _tracker()
     meta = Meta(combined_genres="Horror", keywords=["porn"], unattended=True)
     assert not asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
+
+
+@pytest.mark.parametrize("tracker_name", ["LASTDIGITALUNDERGROUND", "DREADVAULT"])
+@pytest.mark.parametrize("missing_field", ["title", "author", "year", "book_language"])
+def test_book_required_fields_skip_only_when_required(tracker_name, missing_field, monkeypatch):
+    meta = Meta(
+        category="BOOK",
+        trackers=[tracker_name],
+        unattended=True,
+        title="Book Title",
+        author="Author Name",
+        year=2026,
+        book_language="English",
+        book_language_iso="eng",
+        type="EPUB",
+        combined_genres="Horror",
+    )
+    meta[missing_field] = ""
+    config = {"TRACKERS": {tracker_name: {"api_key": "test-token", "announce_url": "https://example.com/announce"}}}
+    search = AsyncMock(return_value=[])
+    monkeypatch.setattr(TrackerSetup, "check_banned_group", AsyncMock(return_value=False))
+    monkeypatch.setattr(TrackerSetup, "get_torrent_claims", AsyncMock(return_value=False))
+    monkeypatch.setattr(tracker_class_map[tracker_name], "search_existing", search)
+    monkeypatch.setattr("src.trackerstatus.DupeChecker.filter_dupes", AsyncMock(return_value=[]))
+
+    count = asyncio.run(TrackerStatusManager(config).process_all_trackers(meta))
+
+    skipped = tracker_name != "DREADVAULT" or missing_field != "year"
+    assert meta.tracker_status[tracker_name]["skipped"] is skipped  # noqa: S101
+    assert meta.tracker_status[tracker_name]["upload"] is not skipped  # noqa: S101
+    assert count == int(not skipped)  # noqa: S101
+    assert search.await_count == int(not skipped)  # noqa: S101
+    assert meta[missing_field] == ""  # noqa: S101
+
+
+@pytest.mark.parametrize(
+    ("trackers", "fields"),
+    [
+        (["LASTDIGITALUNDERGROUND"], ["title", "author", "year", "language"]),
+        (["DREADVAULT"], ["title", "author", "language"]),
+        (["DREADVAULT", "LASTDIGITALUNDERGROUND"], ["title", "author", "language", "year"]),
+        ([], ["title", "author", "year", "language"]),
+    ],
+)
+def test_book_prompt_uses_selected_trackers_required_fields(trackers, fields, monkeypatch):
+    import upload
+
+    ui = Mock()
+    ui.ask_string.return_value = ""
+    monkeypatch.setattr(upload, "CLI_UI", ui)
+    meta = Meta(category="BOOK", trackers=trackers, artwork_url="https://example.com/cover.jpg")
+
+    assert asyncio.run(upload._prompt_book_meta(meta))  # noqa: S101
+
+    assert [call.args[0] for call in ui.ask_string.call_args_list] == [f"Enter {field} (leave blank to skip): " for field in fields]  # noqa: S101
 
 
 @pytest.mark.parametrize(
@@ -247,7 +304,7 @@ def test_dreadvault_ebook_horror_checks_when_unattended(combined_genres, keyword
         assert caplog.text.count("Horror gate could not be evaluated because the book has no genre metadata; trusting the uploader's selection.") == 1  # noqa: S101
 
 
-def test_dreadvault_ebook_does_not_add_identifier_payload_fields():
+def test_dreadvault_ebook_has_no_tracker_specific_additional_data():
     meta = Meta(category="BOOK", type="EPUB", openlibrary="OL123M", isbn="9780765377067")
 
     assert asyncio.run(_tracker().get_additional_data(meta)) == {}  # noqa: S101

@@ -42,6 +42,7 @@ class DreadVault(UNIT3D):
     search_url = f"{base_url}/api/torrents/filter"
     torrent_url = f"{base_url}/torrents/"
     supported_categories = ("TV", "MOVIE", "BOOK")
+    book_required_fields = ("title", "author", "book_language")
     tracker_urls = ("https://dreadvault.org",)
     # site rules allow coexisting releases; only a literal duplicate (same files
     # and size) is a dupe
