@@ -15,7 +15,7 @@ Config = dict[str, Any]
 
 class DreadVault(UNIT3D):
     """
-    DreadVault (DV) is a Private Torrent Tracker for HORROR MOVIES / TV
+    DreadVault (DV) is a Private Torrent Tracker for HORROR MOVIES / TV / EBOOKS
     """
 
     tracker = "DREADVAULT"
@@ -41,7 +41,7 @@ class DreadVault(UNIT3D):
     requests_url = f"{base_url}/api/requests/filter"
     search_url = f"{base_url}/api/torrents/filter"
     torrent_url = f"{base_url}/torrents/"
-    supported_categories = ("TV", "MOVIE")
+    supported_categories = ("TV", "MOVIE", "BOOK")
     tracker_urls = ("https://dreadvault.org",)
     # site rules allow coexisting releases; only a literal duplicate (same files
     # and size) is a dupe
@@ -52,7 +52,52 @@ class DreadVault(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
 
+    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        category_id = await super().get_category_id(meta, mapping_only=True)
+        category_id["BOOK"] = "3"
+        if mapping_only:
+            return category_id
+        if reverse:
+            return {v: k for k, v in category_id.items()}
+        return {"category_id": category_id.get(category or meta.category, "0")}
+
+    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        type_id = await super().get_type_id(meta, mapping_only=True)
+        type_id.update({"PDF": "7", "EPUB": "8", "CBR": "9"})
+        if mapping_only:
+            return type_id
+        if reverse:
+            return {v: k for k, v in type_id.items()}
+        resolved_type = type or (self._book_format(meta) if meta.category == "BOOK" else meta.type)
+        return {"type_id": type_id.get(resolved_type or "", "0")}
+
+    @staticmethod
+    def _terms(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return cast(list[str], value)
+        return [term.strip() for term in str(value or "").split(",") if term.strip()]
+
+    @staticmethod
+    def _book_format(meta: Meta) -> str:
+        return (meta.type or meta.container or "").strip().upper().lstrip(".")
+
+    def _book_name(self, meta: Meta) -> str:
+        author = str(meta.author or meta.book_author or "").strip()
+        title = str(meta.title or "").strip()
+        year = str(meta.year or "").strip()
+        edition = str(meta.manual_edition or meta.edition or "").strip()
+        format_name = self._book_format(meta)
+        source = str(meta.manual_source or meta.source or "").strip().upper()
+        scan_type = "OCR" if meta.ocr else "SCAN" if source == "SCAN" else ""
+        isbn = re.sub(r"[^0-9Xx]", "", str(meta.isbn or ""))
+        name = " ".join(part for part in (author, "-" if author and title else "", title, edition, year, format_name, scan_type, isbn) if part)
+        tag = str(meta.tag or "").strip().lstrip("-").strip()
+        return f"{name}-{tag}" if tag else name
+
     async def get_name(self, meta: Meta) -> dict[str, str]:
+        if meta.category == "BOOK":
+            return {"name": self._book_name(meta)}
+
         dreadvault_name: str = meta.name
         resolution: str = meta.resolution
         video_codec: str = meta.video_codec
@@ -114,14 +159,20 @@ class DreadVault(UNIT3D):
         return {"name": dreadvault_name}
 
     async def get_additional_checks(self, meta: Meta) -> bool:
-        combined_genres_value = meta.combined_genres
-        if isinstance(combined_genres_value, list):
-            combined_genres = cast(list[str], combined_genres_value)
-        else:
-            combined_genres = [genre.strip() for genre in str(combined_genres_value).split(",") if genre.strip()]
+        if meta.category == "BOOK":
+            if meta.audiobook:
+                logger.info(f"{self.tracker}: [bold red]Audiobooks are not supported; DreadVault has no audiobook category. Skipping upload.[/bold red]")
+                return False
+            format_name = self._book_format(meta)
+            if format_name not in ("PDF", "EPUB", "CBR"):
+                logger.info(f"{self.tracker}: [bold red]Unsupported eBook format: {format_name or 'unspecified'}. Only PDF, EPUB and CBR are supported. Skipping upload.[/bold red]")
+                return False
+
+        combined_genres = self._terms(meta.combined_genres)
+        keywords = self._terms(meta.keywords)
 
         # substring per term: the horror signal is often a compound keyword
-        searchable = {term.lower() for term in [*combined_genres, *meta.keywords]}
+        searchable = {term.lower() for term in [*combined_genres, *keywords]}
         if not any("horror" in term for term in searchable):
             if not meta.unattended or (meta.unattended and meta.unattended_confirm):
                 logger.info(f"{self.tracker}: [bold red]Only horror content is allowed at {self.tracker}.[/bold red]")
@@ -132,7 +183,7 @@ class DreadVault(UNIT3D):
             else:
                 return False
 
-        genres = ", ".join([*meta.keywords, *combined_genres])
+        genres = ", ".join([*keywords, *combined_genres])
         # only terms that never appear as TMDB keywords on legitimate horror
         adult_keywords = ["xxx", "porn", "adult", "hentai", "softcore"]
         if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):

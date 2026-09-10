@@ -14,7 +14,7 @@ def _tracker() -> DreadVault:
 def test_dreadvault_is_registered_with_full_tracker_name():
     assert tracker_class_map["DREADVAULT"] is DreadVault  # noqa: S101
     assert DreadVault.display_name == "DreadVault"  # noqa: S101
-    assert DreadVault.supported_categories == ("TV", "MOVIE")  # noqa: S101
+    assert DreadVault.supported_categories == ("TV", "MOVIE", "BOOK")  # noqa: S101
 
 
 def test_dreadvault_dvl_alias_resolves_to_the_canonical_name():
@@ -108,20 +108,148 @@ def test_dreadvault_rejects_adult_content():
     assert not asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
 
 
+@pytest.mark.parametrize(
+    ("ocr", "source", "expected"),
+    [
+        (True, "SCAN", "Liu Cixin - The Three-Body Problem Revised Edition 2008 PDF OCR 9780765377067-GROUP"),
+        (False, "scan", "Liu Cixin - The Three-Body Problem Revised Edition 2008 PDF SCAN 9780765377067-GROUP"),
+        (False, "RETAIL", "Liu Cixin - The Three-Body Problem Revised Edition 2008 PDF 9780765377067-GROUP"),
+    ],
+)
+def test_dreadvault_ebook_name_includes_edition_type_isbn_and_tag(ocr, source, expected):
+    meta = Meta(
+        category="BOOK",
+        author="Liu Cixin",
+        title="The Three-Body Problem",
+        edition="Revised Edition",
+        year=2008,
+        type="PDF",
+        ocr=ocr,
+        source=source,
+        isbn="978-0765377067",
+        tag="-GROUP",
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == expected  # noqa: S101
+
+
+@pytest.mark.parametrize("book_format", ["EPUB", "CBR"])
+def test_dreadvault_ebook_name_omits_absent_edition_and_isbn(book_format):
+    meta = Meta(category="BOOK", author="Author Name", title="Book Title", year=2026, type=book_format, tag="GROUP")
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == f"Author Name - Book Title 2026 {book_format}-GROUP"  # noqa: S101
+
+
+def test_dreadvault_ebook_name_prefers_manual_edition():
+    meta = Meta(category="BOOK", author="Author Name", title="Book Title", edition="First Edition", manual_edition="Second Edition", year=2026, type="EPUB")
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Author Name - Book Title Second Edition 2026 EPUB"  # noqa: S101
+
+
+def test_dreadvault_book_name_never_uses_publisher_as_author():
+    meta = Meta(category="BOOK", publisher="Publisher Name", title="Book Title", year=2026, type="EPUB", isbn="978-0-123456-47-2")
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Book Title 2026 EPUB 9780123456472"  # noqa: S101
+
+
+@pytest.mark.parametrize(("author", "expected_author"), [("", "Book Author"), ("Author Name", "Author Name")])
+def test_dreadvault_book_name_falls_back_to_book_author(author, expected_author):
+    meta = Meta(category="BOOK", author=author, book_author="Book Author", publisher="Publisher Name", title="Book Title", year=2026, type="EPUB")
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == f"{expected_author} - Book Title 2026 EPUB"  # noqa: S101
+
+
+@pytest.mark.parametrize(
+    ("manual_source", "source", "ocr", "expected"),
+    [
+        ("scan", "RETAIL", False, "Book Title 2026 PDF SCAN"),
+        ("RETAIL", "SCAN", False, "Book Title 2026 PDF"),
+        ("SCAN", "RETAIL", True, "Book Title 2026 PDF OCR"),
+    ],
+)
+def test_dreadvault_book_name_prefers_manual_source_and_ocr(manual_source, source, ocr, expected):
+    meta = Meta(category="BOOK", title="Book Title", year=2026, type="PDF", manual_source=manual_source, source=source, ocr=ocr)
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == expected  # noqa: S101
+
+
+@pytest.mark.parametrize(("book_format", "type_id"), [("EPUB", "8"), ("PDF", "7"), ("CBR", "9")])
+@pytest.mark.parametrize("format_field", ["type", "container"])
+def test_dreadvault_ebook_category_type_and_resolution_ids(book_format, type_id, format_field):
+    tracker = _tracker()
+    meta = Meta(category="BOOK", resolution="Other", **{format_field: f" .{book_format.lower()} "})
+
+    assert asyncio.run(tracker.get_category_id(meta)) == {"category_id": "3"}  # noqa: S101
+    assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": type_id}  # noqa: S101
+    assert asyncio.run(tracker.get_resolution_id(meta)) == {"resolution_id": "10"}  # noqa: S101
+
+
+@pytest.mark.parametrize("book_format", ["MOBI", "AZW", "AZW3", "CBZ", "TXT", "DJVU", "LIT", "ENCODE", ""])
+def test_dreadvault_rejects_unsupported_ebook_formats(book_format, caplog):
+    meta = Meta(category="BOOK", type=book_format, keywords=["Horror fiction"], unattended=True)
+
+    assert not asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+    assert "DREADVAULT" in caplog.text  # noqa: S101
+    assert "format" in caplog.text.lower()  # noqa: S101
+    assert book_format in caplog.text  # noqa: S101
+
+
+@pytest.mark.parametrize("unattended", [False, True])
+def test_dreadvault_rejects_audiobooks(unattended, caplog):
+    meta = Meta(category="BOOK", audiobook=True, type="EPUB", keywords=["Horror fiction"], unattended=unattended)
+
+    assert not asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+    assert "DREADVAULT" in caplog.text  # noqa: S101
+    assert "audiobook" in caplog.text.lower()  # noqa: S101
+
+
+@pytest.mark.parametrize("category", ["MOVIE", "TV"])
+@pytest.mark.parametrize(("combined_genres", "accepted"), [("Horror", True), ("Comedy", False)])
+def test_dreadvault_audiobook_flag_preserves_movie_and_tv_horror_checks(category, combined_genres, accepted):
+    meta = Meta(category=category, audiobook=True, combined_genres=combined_genres, unattended=True)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
+
+
+@pytest.mark.parametrize(("keywords", "accepted"), [(["Horror fiction"], True), (["Romance"], False), ([], False)])
+def test_dreadvault_ebook_requires_a_horror_subject_when_unattended(keywords, accepted):
+    meta = Meta(category="BOOK", type="EPUB", combined_genres="", keywords=keywords, unattended=True)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
+
+
+def test_dreadvault_ebook_does_not_add_identifier_payload_fields():
+    meta = Meta(category="BOOK", type="EPUB", openlibrary="OL123M", isbn="9780765377067")
+
+    assert asyncio.run(_tracker().get_additional_data(meta)) == {}  # noqa: S101
+
+
 def test_dreadvault_formats_dvdrip_with_resolution_and_encode_after_audio():
     meta = Meta(
         name="Example Movie 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
         type="DVDRIP",
         source="PAL DVD",
         resolution="480p",
-        video_encode="x264",
+        video_encode=" x264",
         audio="DD 2.0",
         language_checked=True,
     )
 
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
-    assert "480p DVDRip" in name and name.index("DD 2.0") < name.index("x264")  # noqa: S101
+    assert name == "Example Movie 2001 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
 
 
 def test_dreadvault_formats_dvd_disc_with_resolution_codec_region_and_source():
