@@ -6,8 +6,9 @@ import pytest
 from PIL import Image
 
 from src.args import Args
-from src.artwork import prepare_artwork
+from src.artwork import is_valid_cover_image, prepare_artwork
 from src.meta import Meta
+from src.temp_paths import artwork_dir
 from src.trackers.UNIT3D import UNIT3D
 from upload import _prompt_book_meta, _prompt_music_meta
 import upload
@@ -62,10 +63,24 @@ async def test_book_artwork_discovers_release_cover(tmp_path: Path, image_names:
     book.touch()
     for name in image_names:
         Image.new("RGB", (32, 48), "blue").save(tmp_path / name)
-    meta = Meta(category="BOOK", path=str(book if single_file else tmp_path))
+    originals = {name: (tmp_path / name).read_bytes() for name in image_names}
+    meta = Meta(category="BOOK", path=str(book if single_file else tmp_path), base_dir=str(tmp_path), uuid="book-artwork")
 
-    assert await upload._ensure_valid_book_artwork(meta) is (expected is not None)
-    assert meta.artwork_path == (str((tmp_path / expected).resolve()) if expected else "")
+    with patch("upload.logger.info") as log:
+        assert await upload._ensure_valid_book_artwork(meta) is (expected is not None)
+
+    if expected:
+        cover = artwork_dir(meta.base_dir, meta.uuid) / "POSTER.png"
+        assert Path(meta.artwork_path) == cover
+        assert cover.is_file()
+        assert is_valid_cover_image(cover)
+        assert cover.read_bytes() == originals[expected]
+        log.assert_any_call(f"[green]BOOK upload: using local cover artwork: {expected}[/green]")
+    else:
+        assert meta.artwork_path == ""
+    for name, content in originals.items():
+        assert (tmp_path / name).is_file()
+        assert (tmp_path / name).read_bytes() == content
 
 
 @pytest.mark.asyncio
@@ -74,10 +89,52 @@ async def test_book_artwork_skips_invalid_matching_image(tmp_path: Path) -> None
     (tmp_path / "book.jpg").write_bytes(b"not an image")
     cover = tmp_path / "cover.png"
     Image.new("RGB", (32, 48), "green").save(cover)
-    meta = Meta(category="BOOK", path=str(tmp_path))
+    meta = Meta(category="BOOK", path=str(tmp_path), base_dir=str(tmp_path), uuid="book-artwork")
 
     assert await upload._ensure_valid_book_artwork(meta)
-    assert meta.artwork_path == str(cover.resolve())
+    assert Path(meta.artwork_path) == artwork_dir(meta.base_dir, meta.uuid) / "POSTER.png"
+    assert is_valid_cover_image(meta.artwork_path)
+    assert Path(meta.artwork_path).read_bytes() == cover.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_book_artwork_does_not_copy_poster_onto_itself(tmp_path: Path) -> None:
+    meta = Meta(category="BOOK", base_dir=str(tmp_path), uuid="book-artwork")
+    directory = artwork_dir(meta.base_dir, meta.uuid)
+    (directory / "book.epub").touch()
+    cover = directory / "POSTER.png"
+    Image.new("RGB", (32, 48), "blue").save(cover)
+    original = cover.read_bytes()
+    meta.path = str(directory)
+
+    with patch("upload.shutil.copy2") as copy:
+        assert await upload._ensure_valid_book_artwork(meta)
+
+    copy.assert_not_called()
+    assert Path(meta.artwork_path) == cover
+    assert is_valid_cover_image(cover)
+    assert cover.read_bytes() == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("copy_error", [True, False], ids=["copy-error", "invalid-copy"])
+async def test_book_artwork_rejects_failed_copy(tmp_path: Path, copy_error: bool) -> None:
+    (tmp_path / "book.epub").touch()
+    source = tmp_path / "book.jpg"
+    Image.new("RGB", (32, 48), "blue").save(source)
+    original = source.read_bytes()
+    meta = Meta(category="BOOK", path=str(tmp_path), base_dir=str(tmp_path), uuid="book-artwork")
+
+    def copy_cover(_source: Path, destination: Path) -> None:
+        if copy_error:
+            raise OSError("copy failed")
+        destination.write_bytes(b"not an image")
+
+    with patch("upload.shutil.copy2", side_effect=copy_cover):
+        assert not await upload._ensure_valid_book_artwork(meta)
+
+    assert meta.artwork_path == ""
+    assert source.read_bytes() == original
 
 
 @pytest.mark.asyncio

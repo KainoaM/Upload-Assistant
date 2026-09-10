@@ -1021,7 +1021,12 @@ async def _ensure_valid_book_artwork(meta: Meta) -> bool:
                 candidates += images
             for candidate in candidates:
                 if is_valid_cover_image(candidate):
-                    meta.artwork_path = str(candidate.resolve())
+                    destination = artwork_dir(meta.base_dir, meta.uuid) / "POSTER.png"
+                    if candidate.resolve() != destination.resolve():
+                        shutil.copy2(candidate, destination)
+                    if not is_valid_cover_image(destination):
+                        return False
+                    meta.artwork_path = str(destination.resolve())
                     logger.info(f"[green]BOOK upload: using local cover artwork: {candidate.name}[/green]")
                     return True
 
