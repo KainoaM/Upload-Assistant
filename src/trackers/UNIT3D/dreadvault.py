@@ -173,7 +173,11 @@ class DreadVault(UNIT3D):
 
         # substring per term: the horror signal is often a compound keyword
         searchable = {term.lower() for term in [*combined_genres, *keywords]}
-        if not any("horror" in term for term in searchable):
+        if meta.category == "BOOK" and not searchable:
+            logger.info(
+                f"{self.tracker}: [bold yellow]Horror gate could not be evaluated because the book has no genre metadata; trusting the uploader's selection.[/bold yellow]"
+            )
+        elif not any("horror" in term for term in searchable):
             if not meta.unattended or (meta.unattended and meta.unattended_confirm):
                 logger.info(f"{self.tracker}: [bold red]Only horror content is allowed at {self.tracker}.[/bold red]")
                 if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):

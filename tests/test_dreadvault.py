@@ -92,6 +92,12 @@ def test_dreadvault_rejects_non_horror_when_unattended():
     assert not asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
 
 
+def test_dreadvault_rejects_movie_without_genre_metadata_when_unattended():
+    tracker = _tracker()
+    meta = Meta(category="MOVIE", combined_genres="", keywords=[], unattended=True)
+    assert not asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
+
+
 def test_dreadvault_only_blocks_exact_duplicates():
     assert DreadVault.exact_match_only is True  # noqa: S101
 
@@ -223,11 +229,22 @@ def test_dreadvault_audiobook_flag_preserves_movie_and_tv_horror_checks(category
     assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
 
 
-@pytest.mark.parametrize(("keywords", "accepted"), [(["Horror fiction"], True), (["Romance"], False), ([], False)])
-def test_dreadvault_ebook_requires_a_horror_subject_when_unattended(keywords, accepted):
-    meta = Meta(category="BOOK", type="EPUB", combined_genres="", keywords=keywords, unattended=True)
+@pytest.mark.parametrize(
+    ("combined_genres", "keywords", "accepted"),
+    [
+        ("", ["Horror fiction"], True),
+        ("", ["Romance"], False),
+        ("", [], True),
+        (["Juvenile Fiction"], [], False),
+        (["Fiction / Horror"], [], True),
+    ],
+)
+def test_dreadvault_ebook_horror_checks_when_unattended(combined_genres, keywords, accepted, caplog):
+    meta = Meta(category="BOOK", type="EPUB", combined_genres=combined_genres, keywords=keywords, unattended=True)
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
+    if not combined_genres and not keywords:
+        assert caplog.text.count("Horror gate could not be evaluated because the book has no genre metadata; trusting the uploader's selection.") == 1  # noqa: S101
 
 
 def test_dreadvault_ebook_does_not_add_identifier_payload_fields():
