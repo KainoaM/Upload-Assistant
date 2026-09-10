@@ -425,9 +425,18 @@ class UNIT3D:
             self.get_distributor_id(meta),
         )
 
-        merged: dict[str, str] = {}
+        merged: dict[str, Any] = {}
         for r in results:
             merged.update(r)
+
+        if meta.category == "BOOK" and "BOOK" in self.supported_categories:
+            openlibrary_id = meta.openlibrary or meta.openlibrary_id or meta.openlibrary_book_id or ""
+            if openlibrary_id:
+                # Preserve tracker overrides, including LST's existing field order and empty-ID behavior.
+                merged.setdefault("book_exists_on_openlibrary", "1")
+                merged.setdefault("openlibrary_book_id", openlibrary_id)
+                merged.setdefault("openlibrary_isbn", meta.isbn or "")
+                merged.setdefault("extra_openlibrary_ids", meta.extra_openlibrary_ids or "")
 
         # Handle exclusive flag centrally for all UNIT3D trackers
         # Priority: meta.exclusive > tracker config > default (not set)

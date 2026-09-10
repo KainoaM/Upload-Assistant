@@ -1,9 +1,81 @@
 """Regression tests for LST-specific upload payloads."""
 
 import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
 
 from src.meta import Meta
 from src.trackers.UNIT3D.lst import LST
+
+
+@pytest.mark.parametrize(
+    ("openlibrary", "openlibrary_id", "openlibrary_book_id", "expected_id"),
+    [
+        ("OL123W", "OL456W", "OL789W", "OL123W"),
+        (None, "OL456W", "OL789W", "OL456W"),
+        ("", "", "OL789W", "OL789W"),
+        (None, None, None, ""),
+        ("", "", "", ""),
+    ],
+)
+@pytest.mark.parametrize(("isbn", "extra_ids"), [("9781234567890", "OL456W"), ("", ""), (None, None)])
+def test_lst_book_payload_preserves_legacy_fields_and_order(monkeypatch, openlibrary, openlibrary_id, openlibrary_book_id, expected_id, isbn, extra_ids):
+    tracker = LST({"DEFAULT": {}, "TRACKERS": {"LST": {}}})
+    monkeypatch.setattr(tracker, "get_description", AsyncMock(return_value={"description": "Book description"}))
+    monkeypatch.setattr(tracker.common, "unit3d_distributor_ids", AsyncMock(return_value="42"))
+    meta = Meta(
+        category="BOOK",
+        type="EPUB",
+        author="Author",
+        title="Book",
+        year=2026,
+        edition="Limited Edition",
+        region="CZE",
+        exclusive=True,
+        openlibrary=openlibrary,
+        openlibrary_id=openlibrary_id,
+        openlibrary_book_id=openlibrary_book_id,
+        isbn=isbn,
+        extra_openlibrary_ids=extra_ids,
+    )
+
+    data = asyncio.run(tracker.get_data(meta))
+
+    assert list(data.items()) == [
+        ("name", "Author - Book Limited Edition 2026 EPUB" + (f" {isbn}" if isbn else "")),
+        ("description", "Book description"),
+        ("mediainfo", ""),
+        ("bdinfo", ""),
+        ("category_id", "9"),
+        ("type_id", "15"),
+        ("resolution_id", "10"),
+        ("tmdb", "0"),
+        ("imdb", "0"),
+        ("tvdb", "0"),
+        ("mal", "0"),
+        ("igdb", "0"),
+        ("anonymous", "0"),
+        ("stream", "False"),
+        ("sd", "False"),
+        ("keywords", ""),
+        ("personal_release", "0"),
+        ("internal", "0"),
+        ("featured", "0"),
+        ("free", "0"),
+        ("doubleup", "0"),
+        ("sticky", "0"),
+        ("mod_queue_opt_in", "0"),
+        ("draft_queue_opt_in", "0"),
+        ("edition_id", 6),
+        ("book_exists_on_openlibrary", "1"),
+        ("openlibrary_book_id", expected_id),
+        ("openlibrary_isbn", isbn or ""),
+        ("extra_openlibrary_ids", extra_ids or ""),
+        ("region_id", "244"),
+        ("distributor_id", "42"),
+        ("exclusive", "1"),
+    ]
 
 
 def test_lst_music_payload_includes_discogs_release_and_master_ids():
