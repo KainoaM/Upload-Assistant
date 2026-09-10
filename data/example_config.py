@@ -66,9 +66,12 @@ config: dict[str, Any] = {
         # Obtain them from the Twitch Developer Console: https://dev.twitch.tv/console.
         "twitch_client_id": "",
         "twitch_client_secret": "",
-        # MyAnonamouse (MAM) API key or session cookie (mam_id). Leave blank to disable.
+        # MyAnonamouse (MAM) API key or session cookie (mam_id).
         # Find it under Preferences > Security > View IP locked session cookie.
         "mam_api_key": "",
+        # Skip all MyAnonamouse book metadata, including cached matches (CLI: --book-skip-mam).
+        # Use embedded metadata, Google Books and OpenLibrary instead.
+        "book_skip_mam": False,
         # GazelleGames API key. Leave blank to disable game metadata enrichment.
         # Create one in your GazelleGames profile settings with no write permissions required.
         "ggn_api_key": "",

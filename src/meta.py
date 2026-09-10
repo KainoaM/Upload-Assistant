@@ -84,6 +84,7 @@ class Meta:
     book_publisher: str | None = None
     book_series_index: str = ""
     book_series: str = ""
+    book_skip_mam: bool = False
     book_title: str | None = None
     book_translator: str | None = None
     cast: list[str] = field(default_factory=list)

@@ -173,6 +173,7 @@ Common options:
   --description              Inline custom description block
   -df, --descfile            Path to custom description file
   -boverview, --book-overview  Book/Audiobook overview/synopsis (overrides auto-detected value)
+  --book-skip-mam            Skip MyAnonamouse metadata; use embedded metadata, Google Books and OpenLibrary
   -serv, --service           Streaming service
   --no-aka                   Remove AKA from title
   -daily, --daily            Air date of a daily type episode (YYYY-MM-DD)
@@ -537,6 +538,14 @@ class Args:
         parser.add_argument("-year", "--year", dest="manual_year", nargs=1, required=False, help="Override the year found", default=0)
         parser.add_argument("-author", "--author", nargs="*", required=False, help="Book/Audiobook author name (overrides auto-detected value)", type=str, dest="book_author")
         parser.add_argument("-btitle", "--book-title", nargs="*", required=False, help="Book/Audiobook title (overrides auto-detected value)", type=str, dest="book_title")
+        parser.add_argument(
+            "--book-skip-mam",
+            action="store_true",
+            required=False,
+            help="Skip MyAnonamouse metadata; use embedded metadata, Google Books and OpenLibrary",
+            dest="book_skip_mam",
+            default=False,
+        )
         parser.add_argument("--comic", "-comic", action="store_true", required=False, help="Identify the book upload as a Comic", dest="comic", default=False)
         parser.add_argument("--manga", "-manga", action="store_true", required=False, help="Identify the book upload as a Manga", dest="manga", default=False)
         parser.add_argument("--magazine", "-magazine", action="store_true", required=False, help="Identify the book upload as a Magazine", dest="magazine", default=False)

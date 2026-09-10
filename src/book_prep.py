@@ -48,6 +48,7 @@ from src.console import logger
 from src.exportmi import export_info
 from src.genre_map import map_audiobook_keywords
 from src.meta import Meta
+from src.tracker_descriptions import resolve_description_mode
 
 # ---------------------------------------------------------------------------
 # File-list resolution
@@ -203,6 +204,43 @@ def _unescape_meta_val(val: Any) -> str | None:
 def _is_chapter_title(value: str | None) -> bool:
     """Return whether a MediaInfo title is only an audiobook chapter label."""
     return bool(value and re.fullmatch(r"(?:cap[ií]tulo|chapter)\s+\d+(?:\.\d+)?", value.strip(), re.IGNORECASE))
+
+
+def _book_collection_signal(title: str) -> str:
+    count = re.search(
+        r"\b(\d+)[\s-]+(?:(?:books|novels|volumes)(?=\s*(?:$|[\])}]))"
+        r"|(?:books?|novels?|volumes?)[\s-]+(?:collection|omnibus|box(?:ed)?[\s-]+set|set)\b)",
+        title,
+        re.IGNORECASE,
+    )
+    if count and int(count.group(1)) > 1:
+        return count.group(0)
+    span = re.search(r"\b(?:books|novels|volumes)\s+(\d+)\s*[-\u2013\u2014]\s*(\d+)\b", title, re.IGNORECASE)
+    if span and int(span.group(2)) > int(span.group(1)):
+        return span.group(0)
+    return ""
+
+
+def _mam_collection_mismatch(meta: Meta, videopath: str, mam_data: dict[str, Any]) -> str:
+    book_files = [file for file in (meta.filelist or [videopath]) if Path(file).suffix.lower() in BOOK_EXTENSIONS]
+    if meta.audiobook or len(book_files) != 1:
+        return ""
+    local_title = meta.title or ""
+    mam_title = str(mam_data.get("title") or "")
+    normalized_local = re.sub(r"[\W_]+", " ", local_title.casefold()).strip()
+    normalized_mam = re.sub(r"[\W_]+", " ", mam_title.casefold()).strip()
+    if not normalized_local or f" {normalized_local} " in f" {normalized_mam} ":
+        return ""
+    # One file can itself be an omnibus; keep matching editions and locally identified collections.
+    if _book_collection_signal(local_title) or re.search(
+        r"\b(?:collection|omnibus|anthology|box(?:ed)?[\s-]*set|(?:complete|collected)\s+works)\b", local_title, re.IGNORECASE
+    ):
+        return ""
+    local_isbn = re.sub(r"[-\s]", "", meta.isbn or "").upper()
+    mam_isbn = re.sub(r"[-\s]", "", str(mam_data.get("isbn") or "")).upper()
+    if local_isbn and local_isbn == mam_isbn:
+        return ""
+    return _book_collection_signal(mam_title)
 
 
 async def gather_book_prep(
@@ -506,7 +544,8 @@ async def gather_book_prep(
                 meta.book_series_index = fname_index
 
     # MyAnonamouse API search using torrent client comments (online lookup takes precedence)
-    if not meta.torrent_comments and not meta.skip_auto_torrent and not meta.edit and config:
+    skip_mam = meta.book_skip_mam or (config or {}).get("DEFAULT", {}).get("book_skip_mam", False)
+    if not skip_mam and not meta.torrent_comments and not meta.skip_auto_torrent and not meta.edit and config:
         from src.clients import Clients
 
         try:
@@ -516,7 +555,7 @@ async def gather_book_prep(
             logger.debug(f"[yellow]Warning: Could not search client for book torrent comments: {e}[/yellow]")
 
     mam_id = None
-    if meta.torrent_comments:
+    if not skip_mam and meta.torrent_comments:
         for comment_data in meta.torrent_comments:
             trackers = str(comment_data.get("trackers", ""))
             comment = str(comment_data.get("comment", ""))
@@ -559,6 +598,15 @@ async def gather_book_prep(
             from src.myanonamouse import myanonamouse_manager
 
             mam_data = await myanonamouse_manager.search_by_id(mam_id, base_dir=base_dir, api_key=api_key)
+            if mam_data and (collection_signal := _mam_collection_mismatch(meta, videopath, mam_data)):
+                logger.info(
+                    f"[yellow]MyAnonamouse data set aside: MAM title indicates a collection ({collection_signal}), but the upload is a single ebook with a different title.[/yellow]"
+                )
+                mam_data = None
+            if mam_data:
+                description_mode = resolve_description_mode(meta.tracker_description_mode or (config or {}).get("DEFAULT", {}).get("tracker_description_mode", "text"))
+                if meta.only_id or meta.skip_tracker_descriptions or not description_mode.imports_text:
+                    mam_data = {key: val for key, val in mam_data.items() if key != "overview"}
             if mam_data:
                 for key, val in mam_data.items():
                     if val:
