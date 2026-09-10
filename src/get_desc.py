@@ -1439,6 +1439,14 @@ class DescriptionBuilder:
 
         # Book details
         if book and meta.category == "BOOK":
+            cover = meta.hosted_artwork[0] if meta.hosted_artwork else {}
+            raw_url = cover.get("raw_url") or cover.get("img_url") or meta.rehosted_artwork_url
+            if raw_url:
+                web_url = cover.get("web_url") or raw_url
+                img_url = cover.get("img_url") or raw_url
+                desc_parts.append(f"[center]{self.format_screenshot(web_url, raw_url, img_url)}[/center]")
+                cover_urls = {web_url, raw_url, img_url}
+                images = [image for image in images if not any(image.get(key) in cover_urls for key in ("web_url", "raw_url", "img_url"))]
             book_section = self._build_book_desc_section(meta)
             if book_section:
                 desc_parts.append(book_section)
