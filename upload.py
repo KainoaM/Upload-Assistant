@@ -66,7 +66,7 @@ from src.args import Args, read_paths_from_stdin
 from src.artwork import is_public_http_url, is_valid_cover_image
 from src.audio_spectrogram import process_audio_spectrograms
 from src.binaries import configured_binary
-from src.book_prep import detect_newspaper, is_valid_book_language, resolve_book_language
+from src.book_prep import AUDIOBOOK_EXTENSIONS, BOOK_EXTENSIONS, detect_newspaper, is_valid_book_language, resolve_book_language
 from src.cleanup import cleanup_manager
 from src.clients import Clients
 from src.cogs.redaction import PathAwareEncoder, Redaction
@@ -554,12 +554,12 @@ async def validate_tracker_logins(meta: Meta, trackers: list[str] | str | None =
         await asyncio.gather(*[validate_single_tracker(tracker) for tracker in valid_trackers])
 
 
-async def _prompt_book_meta(meta: Meta) -> None:
+async def _prompt_book_meta(meta: Meta) -> bool:
     """Prompt the user to fill in missing BOOK metadata fields (title, author, year, language).
 
     Runs only in interactive (attended) mode.  When any field is filled in the
     torrent name is rebuilt so the confirmation screen and the per-tracker
-    uploads reflect the new values.
+    uploads reflect the new values. Returns False when input reaches EOF.
     """
     book_required_fields = ["title", "author", "year", "book_language"]
     if meta.audiobook and ("CAPYBARABR" in meta.trackers or "ZENITH" in meta.trackers):
@@ -578,7 +578,7 @@ async def _prompt_book_meta(meta: Meta) -> None:
         book_missing.append("artwork")
 
     if not book_missing:
-        return
+        return True
 
     if meta.unattended:
         logger.info(
@@ -587,10 +587,11 @@ async def _prompt_book_meta(meta: Meta) -> None:
             f"Re-run with -btitle / -author / -year / -blang / --poster to supply them, "
             f"or trackers that require them will be skipped.[/yellow]"
         )
-        return
+        return True
 
     logger.info("\n[bold yellow]The following fields are required:[/bold yellow]")
     name_needs_rebuild = False
+    input_available = True
     try:
         for field in book_missing:
             prompt_label = "language" if field == "book_language" else ("cover artwork (path to image file or URL)" if field == "artwork" else field)
@@ -619,19 +620,17 @@ async def _prompt_book_meta(meta: Meta) -> None:
                         break
                     logger.info("[red]Invalid year (must be a 4-digit number between 1000 and 3000). Please try again.[/red]")
             elif field == "artwork":
-                while True:
-                    value = (CLI_UI.ask_string("Enter path to cover artwork image (or public image URL) for BOOK: ") or "").strip()
-                    if not value:
-                        logger.info("[red]Artwork is required for BOOK uploads. Please enter a valid file path or image URL.[/red]")
-                        continue
-                    if _is_http_url(value):
-                        meta.artwork_url = value
-                        break
+                value = (CLI_UI.ask_string("Enter path to cover artwork image (or public image URL) for BOOK: ") or "").strip()
+                if not value:
+                    logger.info("[red]Artwork is required for BOOK uploads. Please enter a valid file path or image URL.[/red]")
+                elif _is_http_url(value):
+                    meta.artwork_url = value
+                else:
                     path_obj = Path(value).expanduser()
                     if path_obj.is_file():
                         meta.artwork_path = str(path_obj.resolve())
-                        break
-                    logger.info("[red]Invalid artwork path or URL. The file does not exist or URL is invalid. Please try again.[/red]")
+                    else:
+                        logger.info("[red]Invalid artwork path or URL. The file does not exist or URL is invalid. Please try again.[/red]")
             else:
                 value = (CLI_UI.ask_string(f"Enter {prompt_label} (leave blank to skip): ") or "").strip()
                 if value:
@@ -640,6 +639,7 @@ async def _prompt_book_meta(meta: Meta) -> None:
     except EOFError:
         logger.info("[yellow]Input cancelled — continuing with missing book fields.[/yellow]")
         name_needs_rebuild = False
+        input_available = False
 
     sanitize_book_language(meta)
     sanitize_book_author(meta)
@@ -648,6 +648,7 @@ async def _prompt_book_meta(meta: Meta) -> None:
     if name_needs_rebuild:
         detect_newspaper(meta)
         meta.name_notag, meta.name, meta.clean_name, meta.potential_missing = await name_manager.get_name(meta)
+    return input_available
 
 
 async def _prompt_game_meta(meta: Meta) -> None:
@@ -1002,6 +1003,28 @@ async def _ensure_valid_book_artwork(meta: Meta) -> bool:
     if is_valid_cover_image(meta.artwork_path):
         return True
 
+    if meta.path:
+        release_path = Path(meta.path).expanduser()
+        with contextlib.suppress(OSError):
+            directory = (release_path if release_path.is_dir() else release_path.parent).resolve()
+            files = sorted(directory.iterdir()) if release_path.exists() else []
+            files = [path for path in files if path.is_file() and path.resolve().parent == directory]
+            book_stems = (
+                {path.stem.casefold() for path in files if path.suffix.casefold() in BOOK_EXTENSIONS | AUDIOBOOK_EXTENSIONS}
+                if release_path.is_dir()
+                else {release_path.stem.casefold()}
+            )
+            images = [path for path in files if path.suffix.casefold() in {".jpg", ".jpeg", ".png", ".webp"}]
+            candidates = [path for path in images if path.stem.casefold() in book_stems]
+            candidates += [path for path in images if path.stem.casefold() in {"cover", "folder", "front", "poster"}]
+            if len(images) == 1:
+                candidates += images
+            for candidate in candidates:
+                if is_valid_cover_image(candidate):
+                    meta.artwork_path = str(candidate.resolve())
+                    logger.info(f"[green]BOOK upload: using local cover artwork: {candidate.name}[/green]")
+                    return True
+
     if not _is_http_url(meta.artwork_url):
         return False
 
@@ -1206,15 +1229,20 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
     # Prompt here - on the shared meta - so the data flows into every tracker's upload
     # and into get_name (which runs again below if any field was filled in).
     if meta.category == "BOOK":
-        await _prompt_book_meta(meta)
+        if not await _ensure_valid_book_artwork(meta):
+            meta.artwork_path = ""
+            meta.artwork_url = ""
+        input_available = await _prompt_book_meta(meta)
+        artwork_attempts = 1
         while not await _ensure_valid_book_artwork(meta):
-            if meta.unattended:
+            if meta.unattended or input_available is False or artwork_attempts >= 3:
                 logger.info("[yellow]BOOK upload: no valid cover could be obtained. Skipping all selected trackers.[/yellow]")
                 meta.trackers = []
                 break
             meta.artwork_path = ""
             meta.artwork_url = ""
-            await _prompt_book_meta(meta)
+            input_available = await _prompt_book_meta(meta)
+            artwork_attempts += 1
 
     if meta.category == "GAME":
         await _prompt_game_meta(meta)

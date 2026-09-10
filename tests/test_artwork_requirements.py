@@ -42,6 +42,94 @@ async def test_prompt_book_meta_accepts_url() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("image_names", "expected", "single_file"),
+    [
+        (("book.jpg",), "book.jpg", False),
+        (("cover.png",), "cover.png", False),
+        (("alpha.jpg", "beta.png"), None, False),
+        ((), None, False),
+        (("book.JPEG", "cover.png"), "book.JPEG", False),
+        (("FRONT.WebP", "random.jpg"), "FRONT.WebP", False),
+        (("folder.png", "random.jpg"), "folder.png", False),
+        (("poster.png", "random.jpg"), "poster.png", False),
+        (("random.jpg",), "random.jpg", False),
+        (("book.jpg", "cover.png"), "book.jpg", True),
+    ],
+)
+async def test_book_artwork_discovers_release_cover(tmp_path: Path, image_names: tuple[str, ...], expected: str | None, single_file: bool) -> None:
+    book = tmp_path / "book.epub"
+    book.touch()
+    for name in image_names:
+        Image.new("RGB", (32, 48), "blue").save(tmp_path / name)
+    meta = Meta(category="BOOK", path=str(book if single_file else tmp_path))
+
+    assert await upload._ensure_valid_book_artwork(meta) is (expected is not None)
+    assert meta.artwork_path == (str((tmp_path / expected).resolve()) if expected else "")
+
+
+@pytest.mark.asyncio
+async def test_book_artwork_skips_invalid_matching_image(tmp_path: Path) -> None:
+    (tmp_path / "book.epub").touch()
+    (tmp_path / "book.jpg").write_bytes(b"not an image")
+    cover = tmp_path / "cover.png"
+    Image.new("RGB", (32, 48), "green").save(cover)
+    meta = Meta(category="BOOK", path=str(tmp_path))
+
+    assert await upload._ensure_valid_book_artwork(meta)
+    assert meta.artwork_path == str(cover.resolve())
+
+
+@pytest.mark.asyncio
+async def test_book_artwork_does_not_search_parent_or_nested_directories(tmp_path: Path) -> None:
+    release = tmp_path / "release"
+    nested = release / "unrelated"
+    nested.mkdir(parents=True)
+    (release / "book.epub").touch()
+    for directory in (tmp_path, nested):
+        Image.new("RGB", (32, 48), "blue").save(directory / "cover.jpg")
+    meta = Meta(category="BOOK", path=str(release))
+
+    assert not await upload._ensure_valid_book_artwork(meta)
+    assert meta.artwork_path == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses", [pytest.param(["", "", ""], id="empty"), pytest.param([EOFError()], id="eof")])
+async def test_book_artwork_retry_stops_without_input(tmp_path: Path, responses: list[str | Exception]) -> None:
+    meta = Meta(
+        category="BOOK",
+        path=str(tmp_path),
+        base_dir=str(tmp_path),
+        uuid="missing-cover",
+        title="Test Book",
+        author="Test Author",
+        year=2024,
+        book_language="English",
+        book_language_iso="eng",
+        imghost="imgbox",
+        trackers=["TEST"],
+        unattended=False,
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+    with (
+        patch("upload.config", {"DEFAULT": {"auto_mode": False}, "TRACKERS": {}}),
+        patch("upload.Prep") as prep,
+        patch("upload.name_manager.get_name", new=AsyncMock(return_value=("Test Book", "Test Book", "Test Book", []))),
+        patch("upload.gen_desc", new=AsyncMock(return_value=meta)),
+        patch("upload.UploadHelper.get_confirmation", new=AsyncMock(return_value=True)),
+        patch("upload.CLI_UI.ask_string", side_effect=[*responses, AssertionError("BOOK artwork prompt did not terminate")]) as prompt,
+    ):
+        prep.return_value.gather_prep = AsyncMock(return_value=meta)
+        assert await upload.process_meta(meta, str(tmp_path))
+
+    assert prompt.call_count == len(responses)
+    assert meta.trackers == []
+    assert meta.artwork_path == ""
+    assert meta.artwork_url == ""
+
+
+@pytest.mark.asyncio
 async def test_prompt_music_meta_accepts_file_path(tmp_path: Path) -> None:
     cover_file = tmp_path / "album_cover.png"
     Image.new("RGB", (32, 48), "purple").save(cover_file)
