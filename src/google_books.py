@@ -12,6 +12,12 @@ from src.metadata_cache import cache_for, is_cache_miss
 google_color_str = "[#4285f4]G[/#4285f4][#ea4335]o[/#ea4335][#fbbc05]o[/#fbbc05][#4285f4]g[/#4285f4][#34a853]l[/#34a853][#ea4335]e[/#ea4335] [#4285f4]Books[/#4285f4]"
 
 
+def _normalize_cover_url(image_link: str) -> str:
+    cover_url = urlsplit(image_link)
+    query = [(key, "0" if key == "zoom" and value == "1" else value) for key, value in parse_qsl(cover_url.query, keep_blank_values=True) if key != "edge"]
+    return cover_url._replace(query=urlencode(query)).geturl()
+
+
 class GoogleBooksManager:
     def _parse_volume_info(self, data: dict[str, Any], isbn: str) -> dict[str, Any] | None:
         """
@@ -30,9 +36,7 @@ class GoogleBooksManager:
 
         # Cover URL (Google Books cover image)
         if volume_id and image_link:
-            cover_url = urlsplit(image_link)
-            query = [(key, "0" if key == "zoom" and value == "1" else value) for key, value in parse_qsl(cover_url.query, keep_blank_values=True) if key != "edge"]
-            metadata["artwork_url"] = cover_url._replace(query=urlencode(query)).geturl()
+            metadata["artwork_url"] = _normalize_cover_url(image_link)
 
         # Title & Subtitle
         title = volume_info.get("title")
@@ -113,6 +117,8 @@ class GoogleBooksManager:
             if cached_data.get("not_found"):
                 logger.info(f"{google_color_str}: ISBN match not found (cached): {clean_isbn}")
                 return None
+            if cached_data.get("artwork_url"):
+                cached_data["artwork_url"] = _normalize_cover_url(cached_data["artwork_url"])
             logger.info(f"{google_color_str}: ISBN match found (cached): {clean_isbn}")
             return cached_data
 
