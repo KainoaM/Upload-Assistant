@@ -16,6 +16,69 @@ from src.prep_helpers import detect_disc_and_category
 
 
 @pytest.mark.parametrize(
+    ("identifier_xml", "expected_isbn"),
+    [
+        (
+            '<dc:identifier>urn:uuid:98c62076-0415-4ad0-ae5f-7c48f4d84400</dc:identifier>'
+            '<dc:identifier opf:scheme="ISBN">9781932234220</dc:identifier>',
+            "9781932234220",
+        ),
+        (
+            '<dc:identifier opf:scheme="ISBN">9781932234220</dc:identifier>'
+            '<dc:identifier>urn:uuid:98c62076-0415-4ad0-ae5f-7c48f4d84400</dc:identifier>',
+            "9781932234220",
+        ),
+        (
+            '<dc:identifier opf:scheme="ISBN">9781932234220</dc:identifier>'
+            '<dc:identifier opf:scheme="ISBN">9780593723166</dc:identifier>',
+            None,
+        ),
+        (
+            '<dc:identifier>9781932234220</dc:identifier>'
+            '<dc:identifier>urn:isbn:9780593723166</dc:identifier>',
+            None,
+        ),
+        (
+            '<dc:identifier opf:scheme="ISBN">978-1-932234-22-0</dc:identifier>'
+            '<dc:identifier>isbn:9781932234220</dc:identifier>',
+            "9781932234220",
+        ),
+        ('<dc:identifier opf:scheme="ISBN">9781932234221</dc:identifier>', None),
+        ('<dc:identifier>urn:isbn:9781932234221</dc:identifier>', None),
+        ('<dc:identifier>9781932234221</dc:identifier>', None),
+        ('<dc:identifier>9781932234220</dc:identifier>', "9781932234220"),
+        ('<dc:identifier opf:scheme="ISBN">0-8044-2957-X</dc:identifier>', "080442957X"),
+        ('<dc:identifier opf:scheme="ASIN">080442957X</dc:identifier>', None),
+    ],
+)
+def test_epub_extracts_only_unambiguous_valid_isbn(tmp_path, identifier_xml, expected_isbn):
+    book = tmp_path / "Dark Water.epub"
+    with zipfile.ZipFile(book, "w") as archive:
+        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>')
+        archive.writestr(
+            "content.opf",
+            f"""
+            <package xmlns="http://www.idpf.org/2007/opf" xmlns:opf="http://www.idpf.org/2007/opf">
+                <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>Dark Water</dc:title>
+                    <dc:creator>Koji Suzuki</dc:creator>
+                    {identifier_xml}
+                </metadata>
+            </package>
+        """,
+        )
+
+    metadata = extract_epub_metadata(str(book))
+
+    assert metadata["title"] == "Dark Water"
+    assert metadata["author"] == "Koji Suzuki"
+    if expected_isbn is None:
+        assert "isbn" not in metadata
+    else:
+        assert metadata["isbn"] == expected_isbn
+
+
+@pytest.mark.parametrize(
     ("subject_xml", "expected_genres"),
     [
         ("<dc:subject> Horror </dc:subject><dc:subject>Fiction / Horror</dc:subject><dc:subject/>", ["Horror", "Fiction / Horror"]),

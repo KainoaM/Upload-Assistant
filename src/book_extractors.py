@@ -64,7 +64,7 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
             author = ""
             language = ""
             date = ""
-            identifier = ""
+            isbns: set[str] = set()
             description = ""
             publisher = ""
             series = ""
@@ -83,12 +83,16 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                     date = (elem.text or "").strip()
                 elif tag_local == "identifier":
                     val = (elem.text or "").strip()
+                    scheme = (elem.attrib.get("{http://www.idpf.org/2007/opf}scheme") or elem.attrib.get("scheme") or "").strip().lower()
+                    if scheme and scheme != "isbn":
+                        continue
                     if val.lower().startswith("urn:isbn:"):
-                        identifier = val[9:]
+                        val = val[9:]
                     elif val.lower().startswith("isbn:"):
-                        identifier = val[5:]
-                    elif not identifier:
-                        identifier = val
+                        val = val[5:]
+                    isbn = validate_isbn_checksum(val)
+                    if isbn:
+                        isbns.add(isbn)
                 elif tag_local == "description":
                     description = (elem.text or "").strip()
                 elif tag_local == "publisher":
@@ -114,10 +118,8 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 match = re.search(r"\b\d{4}\b", date)
                 if match:
                     metadata["year"] = match.group(0)
-            if identifier:
-                cleaned_id = re.sub(r"[^\d]", "", identifier)
-                if len(cleaned_id) in (10, 13):
-                    metadata["isbn"] = cleaned_id
+            if len(isbns) == 1:
+                metadata["isbn"] = next(iter(isbns))
             if description:
                 metadata["overview"] = description
             if publisher:

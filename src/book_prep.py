@@ -695,7 +695,7 @@ async def gather_book_prep(
         from src.openlibrary import openlibrary_manager
 
         openlibrary_data = await openlibrary_manager.search_by_isbn(meta.isbn, base_dir=base_dir)
-    elif meta.title and meta.author:
+    if not openlibrary_id and not openlibrary_data and meta.title and meta.author:
         from src.openlibrary import openlibrary_manager
 
         openlibrary_data = await openlibrary_manager.search_by_title_author(meta.title, meta.author, base_dir=base_dir)

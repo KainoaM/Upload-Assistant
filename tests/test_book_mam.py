@@ -237,6 +237,35 @@ def test_mam_tags_alone_are_not_genre_evidence():
     assert "keywords" not in metadata
 
 
+def test_openlibrary_isbn_miss_tries_name_fallback(book_lookup):
+    lookup = book_lookup
+    lookup.meta.book_skip_mam = True
+    lookup.google_search.return_value = None
+    lookup.openlibrary_search.return_value = None
+    lookup.openlibrary_title_search.return_value = {"overview": "Name lookup synopsis"}
+
+    asyncio.run(gather_book_prep(lookup.meta, lookup.path, lookup.base_dir, lookup.config))
+
+    lookup.openlibrary_search.assert_awaited_once_with(lookup.embedded["isbn"], base_dir=lookup.base_dir)
+    lookup.openlibrary_title_search.assert_awaited_once_with(lookup.embedded["title"], lookup.embedded["author"], base_dir=lookup.base_dir)
+    assert lookup.meta.overview == "Name lookup synopsis"
+
+
+def test_openlibrary_isbn_hit_wins_without_name_fallback(book_lookup):
+    lookup = book_lookup
+    lookup.meta.book_skip_mam = True
+    lookup.google_search.return_value = None
+    lookup.openlibrary_title_search.return_value = {"overview": "Name lookup synopsis"}
+
+    asyncio.run(gather_book_prep(lookup.meta, lookup.path, lookup.base_dir, lookup.config))
+
+    lookup.openlibrary_search.assert_awaited_once_with(lookup.embedded["isbn"], base_dir=lookup.base_dir)
+    lookup.openlibrary_title_search.assert_not_awaited()
+    assert (lookup.meta.title, lookup.meta.author, lookup.meta.overview) == (
+        lookup.openlibrary["title"], lookup.openlibrary["author"], lookup.openlibrary["overview"]
+    )
+
+
 @pytest.mark.parametrize(("subjects", "accepted"), [(["Horrorroman"], True), (["Romance"], False), ([], True)])
 def test_no_isbn_book_uses_openlibrary_evidence_with_mam_skipped(book_lookup, subjects, accepted):
     lookup = book_lookup
