@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import pytest
 
+from src.book_prep import gather_book_prep
+from src.meta import Meta
 from src.metadata_cache import cache_for, is_cache_miss
 from src.openlibrary import openlibrary_manager
+from src.trackers.UNIT3D.dreadvault import DreadVault
 
 
 def _fail_if_network(*_args, **_kwargs):
@@ -48,12 +51,12 @@ def test_openlibrary_uses_central_cache_for_metadata_and_authors(tmp_path, monke
         monkeypatch.setattr("src.openlibrary.httpx.AsyncClient", _fail_if_network)
         cache = cache_for(tmp_path)
         await cache.set("openlibrary", "work", "OL1W", {"title": "Cached work"})
-        await cache.set("openlibrary", "isbn", "9780000000001", {"title": "Cached ISBN"})
+        await cache.set("openlibrary", "isbn", "9780000000001", {"title": "Cached ISBN", "openlibrary": "OL1W"})
         await cache.set("openlibrary", "author", "OL1A", {"name": "Cached author"})
         await cache.set("openlibrary", "work", "OL404W", {"not_found": True}, negative=True)
 
         assert await openlibrary_manager.search_by_work_id("OL1W", tmp_path) == {"title": "Cached work"}
-        assert await openlibrary_manager.search_by_isbn("978-0000000001", tmp_path) == {"title": "Cached ISBN"}
+        assert await openlibrary_manager.search_by_isbn("978-0000000001", tmp_path) == {"title": "Cached ISBN", "openlibrary": "OL1W"}
         assert await openlibrary_manager.get_author_name("/authors/OL1A", None, cache) == "Cached author"
         assert await openlibrary_manager.search_by_work_id("OL404W", tmp_path) is None
         assert not (tmp_path / "tmp" / "openlibrary_cache").exists()
@@ -186,5 +189,68 @@ def test_openlibrary_preserves_edition_subjects_without_work_subjects(tmp_path, 
         metadata = await openlibrary_manager.search_by_isbn("9780000000001", tmp_path)
 
         assert metadata["genres"] == metadata["keywords"] == ["Horror fiction"]
+        assert metadata["openlibrary"] == "OL1W"
+        network = Mock(side_effect=_fail_if_network)
+        monkeypatch.setattr("src.openlibrary.httpx.AsyncClient", network)
+        assert await openlibrary_manager.search_by_isbn("9780000000001", tmp_path) == metadata
+        network.assert_not_called()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cache_state", ["fresh", "complete", "incomplete"])
+@pytest.mark.parametrize("skip_mam", [False, True])
+def test_openlibrary_isbn_work_reaches_book_payload(tmp_path, monkeypatch, cache_state, skip_mam):
+    async def run():
+        isbn = "9781668080016"
+        work_id = "OL42568775W"
+        metadata = {"title": "Night & Day", "author": "Pat Cadigan", "isbn": isbn}
+        cache = cache_for(tmp_path)
+        await cache.set("myanonamouse", "torrent", "1178536", {**metadata, "overview": "MAM description"})
+        await cache.set("google_books", "isbn", isbn, {**metadata, "overview": "Google Books description"})
+        if cache_state != "fresh":
+            cached = {**metadata, "openlibrary": work_id} if cache_state == "complete" else metadata
+            await cache.set("openlibrary", "isbn", isbn, cached)
+
+        details = {**metadata, "works": [{"key": f"/works/{work_id}"}]}
+        client = _Client({f"ISBN:{isbn}": {"details": details}})
+        monkeypatch.setattr("src.openlibrary.httpx.AsyncClient", lambda **_kwargs: client)
+        monkeypatch.setattr(openlibrary_manager, "search_by_work_id", AsyncMock(return_value=None))
+        meta = Meta(
+            **metadata,
+            type="EPUB",
+            edit=True,
+            book_skip_mam=skip_mam,
+            torrent_comments=[{"trackers": "https://tracker.myanonamouse.net/announce", "comment": "MID=1178536"}],
+        )
+        await gather_book_prep(meta, str(tmp_path / "book.epub"), str(tmp_path), {"DEFAULT": {}})
+
+        assert meta.openlibrary == work_id
+        assert meta.overview == ("Google Books description" if skip_mam else "MAM description")
+        tracker = DreadVault({"DEFAULT": {}, "TRACKERS": {}})
+        monkeypatch.setattr(tracker, "get_description", AsyncMock(return_value={"description": "Description"}))
+        monkeypatch.setattr(tracker, "get_mediainfo", AsyncMock(return_value={"mediainfo": ""}))
+        payload = await tracker.get_data(meta)
+        assert payload["openlibrary_book_id"] == work_id
+        assert payload["book_exists_on_openlibrary"] == "1"
+        assert payload["openlibrary_isbn"] == isbn
+        assert len(client.requests) == (0 if cache_state == "complete" else 1)
+        assert (await cache.get("openlibrary", "isbn", isbn))["openlibrary"] == work_id
+
+    asyncio.run(run())
+
+
+def test_openlibrary_incomplete_isbn_cache_survives_refresh_failure(tmp_path, monkeypatch):
+    async def run():
+        metadata = {"title": "Night & Day", "isbn": "9781668080016"}
+        cache = cache_for(tmp_path)
+        await cache.set("openlibrary", "isbn", metadata["isbn"], metadata)
+        client = _Client({})
+        client.get = AsyncMock(side_effect=httpx.ReadTimeout("Timed out"))
+        monkeypatch.setattr("src.openlibrary.httpx.AsyncClient", lambda **_kwargs: client)
+
+        assert await openlibrary_manager.search_by_isbn(metadata["isbn"], tmp_path) == metadata
+        client.get.assert_awaited_once()
+        assert await cache.get("openlibrary", "isbn", metadata["isbn"]) == metadata
 
     asyncio.run(run())

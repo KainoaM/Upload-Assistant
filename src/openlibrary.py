@@ -162,8 +162,10 @@ class OpenLibraryManager:
             if cached_data.get("not_found"):
                 logger.info(f"{openlibrary_color_str}: ISBN match not found (cached): {clean_isbn}")
                 return None
-            logger.info(f"{openlibrary_color_str}: ISBN match found (cached): {clean_isbn}")
-            return cached_data
+            # Older edition-only cache entries may have dropped the work ID.
+            if cached_data.get("openlibrary"):
+                logger.info(f"{openlibrary_color_str}: ISBN match found (cached): {clean_isbn}")
+                return cached_data
 
         bibkey = f"ISBN:{clean_isbn}"
         url = f"https://openlibrary.org/api/books?bibkeys={bibkey}&jscmd=details&format=json"
@@ -195,6 +197,8 @@ class OpenLibraryManager:
 
                         metadata = self._metadata_from_book_details(book_data, details, clean_isbn)
                         if metadata:
+                            if work_key:
+                                metadata["openlibrary"] = work_key.split("/")[-1]
                             await cache.set("openlibrary", "isbn", clean_isbn, metadata)
                             return metadata
                         await cache.set("openlibrary", "isbn", clean_isbn, {"not_found": True}, negative=True)
@@ -209,7 +213,7 @@ class OpenLibraryManager:
         except Exception as e:
             logger.info(f"{openlibrary_color_str}: Network or query error for ISBN {clean_isbn}: {e}")
 
-        return None
+        return cached_data if isinstance(cached_data, dict) else None
 
     @staticmethod
     def _add_subjects(metadata: dict[str, Any], subjects: Any) -> None:
