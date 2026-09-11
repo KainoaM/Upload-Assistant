@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import re
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
 
@@ -29,7 +30,9 @@ class GoogleBooksManager:
 
         # Cover URL (Google Books cover image)
         if volume_id and image_link:
-            metadata["artwork_url"] = image_link
+            cover_url = urlsplit(image_link)
+            query = [(key, "0" if key == "zoom" and value == "1" else value) for key, value in parse_qsl(cover_url.query, keep_blank_values=True) if key != "edge"]
+            metadata["artwork_url"] = cover_url._replace(query=urlencode(query)).geturl()
 
         # Title & Subtitle
         title = volume_info.get("title")
