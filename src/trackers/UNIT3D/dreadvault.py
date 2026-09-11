@@ -163,10 +163,13 @@ class DreadVault(UNIT3D):
         if name_type == "DVDRIP":
             source = "DVDRip"
             encode_token = video_encode.strip()
-            dreadvault_name = dreadvault_name.replace(f"{meta.source} ", "", 1)
-            dreadvault_name = dreadvault_name.replace(f" {encode_token}", "", 1)
+            if meta.source:
+                dreadvault_name = dreadvault_name.replace(f"{meta.source} ", "", 1)
+            if encode_token:
+                dreadvault_name = dreadvault_name.replace(f" {encode_token}", "", 1)
             dreadvault_name = dreadvault_name.replace(f"{source}", f"{resolution} {source}", 1)
-            dreadvault_name = dreadvault_name.replace((meta.audio), f"{meta.audio} {encode_token}", 1)
+            if encode_token:
+                dreadvault_name = dreadvault_name.replace((meta.audio), f"{meta.audio} {encode_token}", 1)
 
         elif meta.is_disc == "DVD":
             region_and_source = " ".join(part for part in (meta.region, source) if part)
@@ -187,7 +190,11 @@ class DreadVault(UNIT3D):
         # branches are what insert it. Running first silently dropped the marker on both.
         if not meta.language_checked:
             await languages_manager.process_desc_language(meta, tracker=self.tracker)
-        audio_languages: list[str] = [] if not meta.audio_languages else meta.audio_languages
+        audio_languages: list[str] = [
+            language
+            for language in meta.audio_languages or []
+            if language.lower() not in {"no", "no linguistic content", "zxx", "und", "undetermined"}
+        ]
         if audio_languages and not await languages_manager.has_english_language(audio_languages):
             foreign_lang = audio_languages[0].upper()
             dvd_remux = name_type == "REMUX" and source in ("PAL DVD", "NTSC DVD", "DVD")

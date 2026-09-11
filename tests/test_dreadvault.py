@@ -538,6 +538,38 @@ def test_dreadvault_formats_dvdrip_with_resolution_and_encode_after_audio():
     assert name == "Example Movie 2001 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
 
 
+def test_dreadvault_formats_hi10p_dvdrip_with_encode_after_audio():
+    meta = Meta(
+        name="Example Movie 2001 PAL DVD Hi10P x264 DVDRip DD 2.0-GRP",
+        type="DVDRIP",
+        source="PAL DVD",
+        resolution="480p",
+        video_encode="Hi10P x264",
+        audio="DD 2.0",
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Example Movie 2001 480p DVDRip DD 2.0 Hi10P x264-GRP"  # noqa: S101
+
+
+def test_dreadvault_preserves_title_spaces_when_dvdrip_source_and_encode_are_empty():
+    meta = Meta(
+        name="Example Movie 1990 DVDRip DD 2.0-GRP",
+        type="DVDRIP",
+        source="",
+        resolution="480p",
+        video_encode="",
+        audio="DD 2.0",
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Example Movie 1990 480p DVDRip DD 2.0-GRP"  # noqa: S101
+
+
 def test_dreadvault_formats_dvd_disc_with_resolution_codec_region_and_source():
     meta = Meta(
         name="Example Movie 2001 R1 NTSC DVD DVD9 DD 5.1-GRP",
@@ -616,6 +648,24 @@ def test_dreadvault_omits_language_marker_when_audio_includes_english():
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
     assert name == "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP"  # noqa: S101
+
+
+@pytest.mark.parametrize("audio_language", ["No", "Undetermined"])
+def test_dreadvault_omits_language_marker_for_non_linguistic_audio(audio_language):
+    meta = Meta(
+        name="Ghost 1984 NTSC x264 DVDRip DD 2.0-SaL",
+        type="DVDRIP",
+        source="NTSC",
+        resolution="480p",
+        video_encode=" x264",
+        audio="DD 2.0",
+        audio_languages=[audio_language],
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Ghost 1984 480p DVDRip DD 2.0 x264-SaL"  # noqa: S101
 
 
 def test_dreadvault_adds_foreign_audio_language_to_a_dvdrip():
