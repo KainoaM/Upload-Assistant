@@ -149,6 +149,7 @@ def _write_png(source: Path | bytes, destination: Path) -> bool:
         image_source = BytesIO(source) if isinstance(source, bytes) else source
         with Image.open(image_source) as image:
             image.load()
+            image.thumbnail((1600, 1600))  # Pathological RGBA images can still approach the 10 MiB cap.
             if image.format not in _SUPPORTED_COVER_FORMATS or image.width <= 0 or image.height <= 0:
                 return False
             if image.mode not in {"RGB", "RGBA"}:
