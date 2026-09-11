@@ -82,6 +82,110 @@ def test_dreadvault_accepts_horror_inside_a_compound_keyword():
     assert asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
 
 
+@pytest.mark.parametrize("field", ["combined_genres", "keywords"])
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Ghost stories",
+        "Ghost story collections",
+        "Vampires",
+        "Occult fiction",
+        "Monsters",
+        "Demonic",
+        "Demon possession",
+        "Spirit possession",
+        "Haunted houses",
+        "Haunted places",
+        "Witchcraft",
+        "Zombies",
+        "Undead",
+        "Werewolf",
+        "Werewolves",
+        "Lycanthropes",
+        "Lycanthropy",
+        "Creature features",
+        "Killer dolls",
+        "Killer objects",
+        "Slasher",
+        "Lovecraftian fiction",
+        "Eldritch",
+        "Giallo",
+        "J-Horror",
+        "K-Horror",
+    ],
+)
+def test_dreadvault_accepts_horror_taxonomy_from_book_subjects(field, subject):
+    meta = Meta(category="BOOK", type="EPUB", unattended=True, **{field: [subject]})
+
+    assert asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [
+        "Supernatural",
+        "Possession",
+        "Witch",
+        "Religious",
+        "Death",
+        "Afterlife",
+        "Animals",
+        "Insects",
+        "Aquatic",
+        "Sea",
+        "Psychological",
+        "Home invasion",
+        "Survival",
+        "Road",
+        "Alien",
+        "Cosmic",
+        "Science fiction",
+        "Body",
+        "Medical",
+        "Gore",
+        "Splatter",
+        "Found footage",
+        "Analog",
+        "Anthology",
+        "Folk",
+        "Comedy",
+        "Dark fantasy",
+        "Thai",
+        "Spanish",
+        "French",
+        "Italian",
+        "British",
+        "American",
+        "Graphic violence",
+        "Thriller",
+        "Ghostwriter",
+        "Switches",
+        "Demonstrations",
+        "Haunted",
+        "House",
+        "Place",
+        "Creature",
+        "Feature",
+        "Killer",
+        "Doll",
+        "Object",
+    ],
+)
+def test_dreadvault_ambiguous_subjects_need_horror_qualification(subject):
+    meta = Meta(category="BOOK", type="EPUB", combined_genres=subject, unattended=True)
+
+    assert not asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+
+    meta.combined_genres = f"{subject} horror"
+    assert asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+
+
+def test_dreadvault_horror_phrases_must_occur_in_one_term():
+    meta = Meta(category="BOOK", type="EPUB", combined_genres=["Haunted", "Killer"], keywords=["House", "Doll"], unattended=True)
+
+    assert not asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+
+
 def test_dreadvault_accepts_horror_with_incidental_mature_keywords():
     tracker = _tracker()
     meta = Meta(combined_genres="Horror, Thriller", keywords=["adult animation", "orgy", "erotic"], unattended=True)
@@ -311,8 +415,12 @@ def test_dreadvault_ebook_horror_checks_when_unattended(combined_genres, keyword
     [
         ({"combined_genres": ["", "  "], "keywords": ["  "]}, "no genre metadata"),
         ({"keywords": ["Romance"]}, "Only horror content"),
+        ({"combined_genres": ["Survival"]}, "Only horror content"),
         ({"combined_genres": "Horror", "keywords": ["porn"]}, "Porn/xxx"),
         ({"combined_genres": "Horror", "adult_media": True}, "Porn/xxx"),
+        ({"combined_genres": ["Ghost stories"], "keywords": ["porn"]}, "Porn/xxx"),
+        ({"combined_genres": ["Vampires"], "keywords": ["xxx"]}, "Porn/xxx"),
+        ({"combined_genres": ["Occult fiction"], "adult_media": True}, "Porn/xxx"),
     ],
 )
 @pytest.mark.parametrize(

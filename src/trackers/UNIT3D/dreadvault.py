@@ -12,6 +12,36 @@ from src.trackers.UNIT3D import UNIT3D
 
 Config = dict[str, Any]
 
+# https://dreadvault.org/wikis/10 (Horror Eligibility): specific horror tropes.
+# Broad subjects, styles and regions still need "horror"; violence alone does not qualify.
+HORROR_TERMS = frozenset({
+    "creature feature",
+    "demon possession",
+    "demonic",
+    "eldritch",
+    "ghost stories",
+    "ghost story",
+    "giallo",
+    "haunted house",
+    "haunted place",
+    "horror",
+    "killer doll",
+    "killer object",
+    "lovecraftian",
+    "lycanthrope",
+    "lycanthropy",
+    "monster",
+    "occult",
+    "slasher",
+    "spirit possession",
+    "undead",
+    "vampire",
+    "werewolf",
+    "werewolves",
+    "witchcraft",
+    "zombie",
+})
+
 
 class DreadVault(UNIT3D):
     """
@@ -174,7 +204,7 @@ class DreadVault(UNIT3D):
 
         # substring per term: the horror signal is often a compound keyword
         searchable = {term.lower() for term in [*combined_genres, *keywords]}
-        if not any("horror" in term for term in searchable):
+        if not any(horror_term in term for term in searchable for horror_term in HORROR_TERMS):
             if not searchable:
                 logger.info(f"{self.tracker}: [bold red]Horror gate could not be evaluated because no genre metadata is available.[/bold red]")
             else:
