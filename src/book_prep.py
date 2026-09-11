@@ -543,6 +543,8 @@ async def gather_book_prep(
             if fname_index and not meta.book_series_index:
                 meta.book_series_index = fname_index
 
+    local_genres = list(meta.genres or [])
+
     # MyAnonamouse API search using torrent client comments (online lookup takes precedence)
     skip_mam = meta.book_skip_mam or (config or {}).get("DEFAULT", {}).get("book_skip_mam", False)
     if not skip_mam and not meta.torrent_comments and not meta.skip_auto_torrent and not meta.edit and config:
@@ -693,6 +695,10 @@ async def gather_book_prep(
         from src.openlibrary import openlibrary_manager
 
         openlibrary_data = await openlibrary_manager.search_by_isbn(meta.isbn, base_dir=base_dir)
+    elif meta.title and meta.author:
+        from src.openlibrary import openlibrary_manager
+
+        openlibrary_data = await openlibrary_manager.search_by_title_author(meta.title, meta.author, base_dir=base_dir)
 
     if openlibrary_data:
         for key, val in openlibrary_data.items():
@@ -729,6 +735,15 @@ async def gather_book_prep(
                         meta[key] = val
                     if key == "year" and "search_year" not in openlibrary_data:
                         meta.search_year = int(val)
+
+    # Classification is additive; a broad provider genre must not hide a more specific one.
+    genres: dict[str, str] = {}
+    for source in (mam_data, google_books_data, openlibrary_data, {"genres": local_genres}):
+        for genre in (source or {}).get("genres", []):
+            if genre.strip():
+                genres.setdefault(genre.strip().casefold(), genre.strip())
+    meta.genres = list(genres.values())
+    meta.combined_genres = ", ".join(meta.genres)
 
     if meta.audiobook:
         filelist = meta.filelist

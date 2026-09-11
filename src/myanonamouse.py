@@ -89,15 +89,12 @@ class MyAnonamouseManager:
             except Exception as ex:
                 logger.debug(f"[yellow]Warning: Could not resolve language '{lang}': {ex}[/yellow]")
 
-        """ Not useful for now, too polluted
-        # Tags -> keywords
-        tags = item.get("tags")
-        if tags:
-            words = str(tags).split()
-            cleaned_words = [w.strip().lower() for w in words if w.strip()]
-            if cleaned_words:
-                metadata["keywords"] = ", ".join(cleaned_words)
-        """
+        # Use the category shelf, not free-text torrent tags.
+        category = html.unescape(str(item.get("catname") or "")).strip()
+        genre = re.sub(r"^(?:ebooks|audiobooks)\s*-\s*", "", category, flags=re.IGNORECASE).strip()
+        if genre:
+            metadata["genres"] = [genre]
+            metadata["keywords"] = [genre]
 
         # Cover
         mam_id = item.get("id")

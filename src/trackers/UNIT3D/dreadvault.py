@@ -75,7 +75,7 @@ class DreadVault(UNIT3D):
     @staticmethod
     def _terms(value: Any) -> list[str]:
         if isinstance(value, list):
-            return cast(list[str], value)
+            return [term.strip() for term in cast(list[str], value) if term.strip()]
         return [term.strip() for term in str(value or "").split(",") if term.strip()]
 
     @staticmethod
@@ -174,31 +174,20 @@ class DreadVault(UNIT3D):
 
         # substring per term: the horror signal is often a compound keyword
         searchable = {term.lower() for term in [*combined_genres, *keywords]}
-        if meta.category == "BOOK" and not searchable:
-            logger.info(
-                f"{self.tracker}: [bold yellow]Horror gate could not be evaluated because the book has no genre metadata; trusting the uploader's selection.[/bold yellow]"
-            )
-        elif not any("horror" in term for term in searchable):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Only horror content is allowed at {self.tracker}.[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
+        if not any("horror" in term for term in searchable):
+            if not searchable:
+                logger.info(f"{self.tracker}: [bold red]Horror gate could not be evaluated because no genre metadata is available.[/bold red]")
             else:
+                logger.info(f"{self.tracker}: [bold red]Only horror content is allowed at {self.tracker}.[/bold red]")
+            if meta.unattended or not cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
                 return False
 
         genres = ", ".join([*keywords, *combined_genres])
         # only terms that never appear as TMDB keywords on legitimate horror
         adult_keywords = ["xxx", "porn", "adult", "hentai", "softcore"]
-        if any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):
-            if not meta.unattended or (meta.unattended and meta.unattended_confirm):
-                logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
-                if cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
-                    pass
-                else:
-                    return False
-            else:
+        if meta.adult_media or any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):
+            logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
+            if meta.unattended or not cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
                 return False
 
-        return self.common.check_and_confirm_adult_media_upload(meta, self.tracker)
+        return True

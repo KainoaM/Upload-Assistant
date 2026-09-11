@@ -291,7 +291,9 @@ def test_dreadvault_audiobook_flag_preserves_movie_and_tv_horror_checks(category
     [
         ("", ["Horror fiction"], True),
         ("", ["Romance"], False),
-        ("", [], True),
+        ("", [], False),
+        ("  ,  ", ["", "  "], False),
+        (["", "  "], [], False),
         (["Juvenile Fiction"], [], False),
         (["Fiction / Horror"], [], True),
     ],
@@ -301,7 +303,34 @@ def test_dreadvault_ebook_horror_checks_when_unattended(combined_genres, keyword
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
     if not combined_genres and not keywords:
-        assert caplog.text.count("Horror gate could not be evaluated because the book has no genre metadata; trusting the uploader's selection.") == 1  # noqa: S101
+        assert "no genre metadata is available" in caplog.text  # noqa: S101
+
+
+@pytest.mark.parametrize(
+    ("evidence", "warning"),
+    [
+        ({"combined_genres": ["", "  "], "keywords": ["  "]}, "no genre metadata"),
+        ({"keywords": ["Romance"]}, "Only horror content"),
+        ({"combined_genres": "Horror", "keywords": ["porn"]}, "Porn/xxx"),
+        ({"combined_genres": "Horror", "adult_media": True}, "Porn/xxx"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("unattended", "unattended_confirm", "response", "accepted"),
+    [(True, False, True, False), (True, True, True, False), (False, False, False, False), (False, False, True, True)],
+)
+def test_dreadvault_content_rules_require_attended_override(evidence, warning, unattended, unattended_confirm, response, accepted, monkeypatch, caplog):
+    meta = Meta(category="BOOK", type="EPUB", unattended=unattended, unattended_confirm=unattended_confirm, **evidence)
+    prompt = Mock(return_value=response)
+    monkeypatch.setattr("src.trackers.UNIT3D.dreadvault.cli_ui.ask_yes_no", prompt)
+
+    assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
+
+    assert warning in caplog.text  # noqa: S101
+    if unattended:
+        prompt.assert_not_called()
+    else:
+        prompt.assert_called_once_with("Do you want to upload anyway?", default=False)
 
 
 def test_dreadvault_ebook_has_no_tracker_specific_additional_data():

@@ -11,6 +11,55 @@ openlibrary_color_str = "[#e1d8c1]OpenLibrary[/#e1d8c1]"
 
 
 class OpenLibraryManager:
+    async def search_by_title_author(self, title: str, author: str, base_dir: str = "") -> dict[str, Any] | None:
+        """Resolve an unambiguous exact title and author match to a work."""
+        title = " ".join(title.casefold().split())
+        author = " ".join(author.casefold().split())
+        if not title or not author:
+            return None
+
+        cache = cache_for(base_dir)
+        cache_key = f"{title}\n{author}"
+        cached_data = await cache.get("openlibrary", "title_author", cache_key)
+        if not is_cache_miss(cached_data) and isinstance(cached_data, dict):
+            if cached_data.get("not_found"):
+                return None
+            if cached_data.get("work_id"):
+                return await self.search_by_work_id(cached_data["work_id"], base_dir)
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.get(
+                    "https://openlibrary.org/search.json",
+                    params={"title": title, "author": author, "fields": "key,title,author_name", "limit": 10},
+                    timeout=10.0,
+                )
+                response.raise_for_status()
+                data = response.json()
+                docs = data.get("docs", [])
+                matches = set()
+                # A truncated result set cannot establish that a match is unique.
+                if data.get("numFound", len(docs)) <= len(docs):
+                    for doc in docs:
+                        if " ".join(str(doc.get("title", "")).casefold().split()) != title:
+                            continue
+                        names = doc.get("author_name", [])
+                        if not isinstance(names, list) or not any(" ".join(str(name).casefold().split()) == author for name in names):
+                            continue
+                        work_match = re.fullmatch(r"(?:/works/)?(OL\d+W)", str(doc.get("key", "")))
+                        if work_match:
+                            matches.add(work_match.group(1))
+
+                if len(matches) != 1:
+                    await cache.set("openlibrary", "title_author", cache_key, {"not_found": True}, negative=True)
+                    return None
+                work_id = matches.pop()
+                await cache.set("openlibrary", "title_author", cache_key, {"work_id": work_id})
+                return await self.search_by_work_id(work_id, base_dir)
+        except Exception as e:
+            logger.info(f"{openlibrary_color_str}: Title/author lookup failed for {title}: {e}")
+            return None
+
     async def get_author_name(self, author_key: str, client: httpx.AsyncClient, cache: MetadataCache) -> str:
         """Fetch an author name from a key such as /authors/OL26320A."""
         author_id = author_key.split("/")[-1]
@@ -84,11 +133,7 @@ class OpenLibraryManager:
                         if author_names:
                             metadata["author"] = ", ".join(author_names)
 
-                        subjects = data.get("subjects")
-                        if subjects and isinstance(subjects, list):
-                            subject_list = [str(subject) for subject in subjects[:10] if subject]
-                            metadata["keywords"] = list(subject_list)
-                            metadata["genres"] = list(subject_list)
+                        self._add_subjects(metadata, data.get("subjects"))
 
                         metadata["openlibrary"] = work_id
                         await cache.set("openlibrary", "work", work_id, metadata)
@@ -138,6 +183,8 @@ class OpenLibraryManager:
                         if work_key:
                             metadata = await self.search_by_work_id(work_key.split("/")[-1], base_dir)
                             if metadata:
+                                if not metadata.get("genres"):
+                                    self._add_subjects(metadata, details.get("subjects"))
                                 publishers = details.get("publishers")
                                 if publishers and isinstance(publishers, list) and not metadata.get("publisher"):
                                     metadata["publisher"] = ", ".join(publishers)
@@ -165,6 +212,14 @@ class OpenLibraryManager:
         return None
 
     @staticmethod
+    def _add_subjects(metadata: dict[str, Any], subjects: Any) -> None:
+        if isinstance(subjects, list):
+            subject_list = [subject.strip() for subject in subjects if isinstance(subject, str) and subject.strip()]
+            if subject_list:
+                metadata["keywords"] = list(subject_list)
+                metadata["genres"] = subject_list
+
+    @staticmethod
     def _add_year(metadata: dict[str, Any], publish_date: Any) -> None:
         if publish_date and not metadata.get("year"):
             year_match = re.search(r"\b\d{4}\b", str(publish_date))
@@ -187,6 +242,7 @@ class OpenLibraryManager:
         if publishers and isinstance(publishers, list):
             metadata["publisher"] = ", ".join(publishers)
         self._add_year(metadata, details.get("publish_date"))
+        self._add_subjects(metadata, details.get("subjects"))
         thumbnail_url = book_data.get("thumbnail_url")
         if thumbnail_url:
             metadata["artwork_url"] = thumbnail_url.replace("-S.jpg", "-L.jpg")

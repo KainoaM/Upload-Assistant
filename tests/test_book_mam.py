@@ -14,6 +14,7 @@ from src.google_books import google_books_manager
 from src.meta import Meta
 from src.myanonamouse import myanonamouse_manager
 from src.openlibrary import openlibrary_manager
+from src.trackers.UNIT3D.dreadvault import DreadVault
 
 
 @pytest.fixture
@@ -29,6 +30,7 @@ def book_lookup(tmp_path, monkeypatch):
             "author_info": '{"42": "MAM Author"}',
             "description": "MAM torrent description",
             "isbn": "978-0-000000-00-3",
+            "catname": "Ebooks - Horror",
         }
     )
     google = {"title": "Google Book", "author": "Google Author", "overview": "Google synopsis"}
@@ -36,6 +38,7 @@ def book_lookup(tmp_path, monkeypatch):
     mam_search = AsyncMock(return_value=mam)
     google_search = AsyncMock(return_value=google)
     openlibrary_search = AsyncMock(return_value=openlibrary)
+    openlibrary_title_search = AsyncMock(return_value=None)
     info = Mock()
     monkeypatch.setattr("src.book_prep._get_epubmeta_output", lambda _: "")
     monkeypatch.setattr("src.book_prep._extract_epub_metadata", lambda _: embedded)
@@ -44,6 +47,7 @@ def book_lookup(tmp_path, monkeypatch):
     monkeypatch.setattr(myanonamouse_manager, "search_by_id", mam_search)
     monkeypatch.setattr(google_books_manager, "search_by_isbn", google_search)
     monkeypatch.setattr(openlibrary_manager, "search_by_isbn", openlibrary_search)
+    monkeypatch.setattr(openlibrary_manager, "search_by_title_author", openlibrary_title_search)
     meta = Meta(
         path=str(book),
         filelist=[str(book)],
@@ -62,6 +66,7 @@ def book_lookup(tmp_path, monkeypatch):
         google_search=google_search,
         openlibrary=openlibrary,
         openlibrary_search=openlibrary_search,
+        openlibrary_title_search=openlibrary_title_search,
         info=info,
     )
 
@@ -81,6 +86,8 @@ def test_mam_opt_out_skips_existing_torrent_comment(book_lookup, opt_out, provid
     asyncio.run(gather_book_prep(lookup.meta, lookup.path, lookup.base_dir, lookup.config))
 
     lookup.mam_search.assert_not_awaited()
+    assert not lookup.meta.genres
+    assert not lookup.meta.keywords
     lookup.google_search.assert_awaited_once_with(lookup.embedded["isbn"], base_dir=lookup.base_dir, api_key="")
     lookup.openlibrary_search.assert_awaited_once_with(lookup.embedded["isbn"], base_dir=lookup.base_dir)
     expected = getattr(lookup, provider)
@@ -143,6 +150,8 @@ def test_mam_collection_does_not_replace_single_book_metadata(book_lookup, mam_t
     assert "myanonamouse" in message or "mam" in message
     assert "set aside" in message
     assert "single" in message and ("collection" in message or "multiple" in message)
+    assert not lookup.meta.genres
+    assert not lookup.meta.keywords
 
 
 @pytest.mark.parametrize(
@@ -202,3 +211,66 @@ def test_ids_policy_allows_per_book_overview_without_mam_description(book_lookup
     assert lookup.meta.overview == getattr(lookup, provider)["overview"]
     assert (lookup.meta.title, lookup.meta.author, lookup.meta.isbn) == (lookup.mam["title"], lookup.mam["author"], lookup.mam["isbn"])
     assert lookup.mam["overview"] == "MAM torrent description"
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [
+        ("Ebooks - Horror", "Horror"),
+        ("Audiobooks - Fantasy", "Fantasy"),
+        ("Ebooks - Crime/Thriller", "Crime/Thriller"),
+        ("Ebooks - Comics/Graphic novels", "Comics/Graphic novels"),
+        ("Ebooks - Science Fiction &amp; Fantasy", "Science Fiction & Fantasy"),
+    ],
+)
+def test_mam_category_is_genre_evidence(category, expected):
+    metadata = myanonamouse_manager._parse_torrent_info({"catname": category, "tags": "horror retail collection"})
+
+    assert metadata["genres"] == [expected]
+    assert metadata["keywords"] == [expected]
+
+
+def test_mam_tags_alone_are_not_genre_evidence():
+    metadata = myanonamouse_manager._parse_torrent_info({"tags": "horror retail collection"})
+
+    assert "genres" not in metadata
+    assert "keywords" not in metadata
+
+
+@pytest.mark.parametrize(("subjects", "accepted"), [(["Horrorroman"], True), (["Romance"], False), ([], False)])
+def test_no_isbn_book_uses_openlibrary_evidence_with_mam_skipped(book_lookup, subjects, accepted):
+    lookup = book_lookup
+    lookup.embedded.pop("isbn")
+    lookup.embedded.update(title="The Troop", author="Nick Cutter")
+    lookup.meta.book_skip_mam = True
+    lookup.meta.category = "BOOK"
+    lookup.meta.type = "EPUB"
+    lookup.meta.unattended = True
+    lookup.openlibrary_title_search.return_value = {"genres": subjects, "keywords": subjects, "openlibrary": "OL19979107W"}
+
+    asyncio.run(gather_book_prep(lookup.meta, lookup.path, lookup.base_dir, lookup.config))
+
+    lookup.mam_search.assert_not_awaited()
+    lookup.google_search.assert_not_awaited()
+    lookup.openlibrary_search.assert_not_awaited()
+    lookup.openlibrary_title_search.assert_awaited_once_with("The Troop", "Nick Cutter", base_dir=lookup.base_dir)
+    assert lookup.meta.genres == subjects
+    assert lookup.meta.keywords == subjects
+    assert not lookup.meta.isbn
+    assert asyncio.run(DreadVault({"TRACKERS": {"DREADVAULT": {}}}).get_additional_checks(lookup.meta)) is accepted
+
+
+def test_book_genres_combine_accepted_providers_without_changing_keyword_override(book_lookup):
+    lookup = book_lookup
+    lookup.meta.keywords = ["manual keyword"]
+    lookup.embedded["genres"] = ["Local subject"]
+    lookup.mam["genres"] = ["Fiction"]
+    lookup.google["genres"] = ["fiction", "Thriller"]
+    lookup.openlibrary["genres"] = ["Horror fiction"]
+
+    asyncio.run(gather_book_prep(lookup.meta, lookup.path, lookup.base_dir, lookup.config))
+
+    assert lookup.meta.genres == ["Fiction", "Thriller", "Horror fiction", "Local subject"]
+    assert lookup.meta.combined_genres == "Fiction, Thriller, Horror fiction, Local subject"
+    assert lookup.meta.keywords == ["manual keyword"]
+    assert lookup.meta.title == lookup.mam["title"]

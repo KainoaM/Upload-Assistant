@@ -3,14 +3,49 @@
 from __future__ import annotations
 
 import asyncio
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from src.book_extractors import extract_epub_metadata
 from src.book_prep import resolve_book_filelist
 from src.meta import Meta
 from src.prep_helpers import detect_disc_and_category
+
+
+@pytest.mark.parametrize(
+    ("subject_xml", "expected_genres"),
+    [
+        ("<dc:subject> Horror </dc:subject><dc:subject>Fiction / Horror</dc:subject><dc:subject/>", ["Horror", "Fiction / Horror"]),
+        ("<dc:subject> </dc:subject><dc:subject/>", []),
+        ("", []),
+    ],
+)
+def test_epub_subjects_supply_genres_without_isbn(tmp_path, subject_xml, expected_genres):
+    book = tmp_path / "The Troop.epub"
+    with zipfile.ZipFile(book, "w") as archive:
+        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>')
+        archive.writestr(
+            "content.opf",
+            f"""
+            <package xmlns="http://www.idpf.org/2007/opf">
+                <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>The Troop</dc:title>
+                    <dc:creator>Nick Cutter</dc:creator>
+                    {subject_xml}
+                </metadata>
+            </package>
+        """,
+        )
+
+    metadata = extract_epub_metadata(str(book))
+
+    assert metadata["title"] == "The Troop"
+    assert "isbn" not in metadata
+    assert metadata.get("genres", []) == expected_genres
+    assert metadata.get("keywords", []) == expected_genres
 
 
 @pytest.mark.parametrize("extension", [".azw", ".azw3", ".fb2", ".html", ".chm", ".djvu", ".doc", ".docx", ".kfx", ".lit", ".pdb", ".txt", ".rtf"])

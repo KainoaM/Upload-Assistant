@@ -69,6 +69,7 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
             publisher = ""
             series = ""
             series_index = ""
+            subjects: list[str] = []
 
             for elem in root.iter():
                 tag_local = elem.tag.split("}")[-1]
@@ -92,6 +93,10 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                     description = (elem.text or "").strip()
                 elif tag_local == "publisher":
                     publisher = (elem.text or "").strip()
+                elif tag_local == "subject":
+                    subject = (elem.text or "").strip()
+                    if subject:
+                        subjects.append(subject)
                 elif tag_local == "meta":
                     meta_name = (elem.attrib.get("name") or "").lower()
                     if meta_name == "calibre:series":
@@ -121,6 +126,8 @@ def extract_epub_metadata(epub_path: str) -> dict[str, Any]:
                 metadata["book_series"] = series
             if series_index:
                 metadata["book_series_index"] = normalize_series_index(series_index)
+            if subjects:
+                metadata["keywords"] = metadata["genres"] = subjects
 
     except Exception as e:
         logger.debug(f"[yellow]Warning: Error parsing EPUB metadata: {e}[/yellow]")
