@@ -16,7 +16,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Awaitable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import ffmpeg
@@ -1290,10 +1290,11 @@ async def download_artwork_from_meta(meta: Meta, artwork_path: str, *, force: bo
 async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: bool = False) -> bool:
     def _extract():
         if not Path(epub_path).is_file() or not zipfile.is_zipfile(epub_path):
+            logger.debug(f"EPUB cover extraction failed for {epub_path}: file is missing or is not a ZIP archive")
             return False
-        with contextlib.suppress(Exception), zipfile.ZipFile(epub_path, "r") as z:
+        with zipfile.ZipFile(epub_path, "r") as z:
             rootfile_path = None
-            with contextlib.suppress(Exception):
+            try:
                 container_data = z.read("META-INF/container.xml")
                 root = ET.fromstring(container_data)
                 for elem in root.iter():
@@ -1301,6 +1302,8 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                         rootfile_path = elem.attrib.get("full-path")
                         if rootfile_path:
                             break
+            except Exception as e:
+                logger.debug(f"EPUB container read failed for {epub_path}: {e}; searching for an OPF file")
 
             if not rootfile_path:
                 for name in z.namelist():
@@ -1309,6 +1312,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                         break
 
             if not rootfile_path:
+                logger.debug(f"EPUB cover extraction failed for {epub_path}: no OPF file found")
                 return False
 
             opf_data = z.read(rootfile_path)
@@ -1317,7 +1321,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
             manifest_items = {}
             cover_item_id = None
             cover_href_direct = None
-            opf_dir = str(Path(rootfile_path).parent)
+            opf_dir = str(PurePosixPath(rootfile_path).parent)
 
             for elem in root.iter():
                 tag_local = elem.tag.split("}")[-1]
@@ -1328,7 +1332,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                     media_type = elem.attrib.get("media-type", "").lower()
                     if item_id and href:
                         manifest_items[item_id] = {"href": href, "media-type": media_type, "properties": properties}
-                        if "cover-image" in properties:
+                        if "cover-image" in properties.split():
                             cover_href_direct = href
                 elif tag_local == "meta":
                     name_attr = elem.attrib.get("name")
@@ -1337,9 +1341,9 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                         cover_item_id = content_attr
 
             def resolve_path(base_dir: str, rel_path: str) -> str:
-                combined = Path(base_dir) / rel_path.replace("\\", "/") if base_dir else rel_path.replace("\\", "/")
+                combined = PurePosixPath(base_dir) / urllib.parse.unquote(rel_path.replace("\\", "/"))
                 parts = []
-                for part in combined.split("/"):
+                for part in combined.as_posix().split("/"):
                     if part == "." or not part:
                         continue
                     if part == "..":
@@ -1355,7 +1359,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                 return href.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
 
             def get_image_from_html(html_href: str) -> str | None:
-                with contextlib.suppress(Exception):
+                try:
                     html_zip_path = resolve_path(opf_dir, html_href)
                     zip_names = z.namelist()
                     matched_name = None
@@ -1370,14 +1374,19 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                         html_content = z.read(matched_name).decode("utf-8", errors="ignore")
                         img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
                         if img_match:
-                            img_src = urllib.parse.unquote(img_match.group(1))
-                            html_dir = str(Path(html_zip_path).parent)
+                            img_src = img_match.group(1)
+                            html_dir = str(PurePosixPath(html_zip_path).parent)
                             return resolve_path(html_dir, img_src)
                         svg_match = re.search(r'<image[^>]+(?:xlink:)?href=["\']([^"\']+)["\']', html_content, re.IGNORECASE)
                         if svg_match:
-                            img_src = urllib.parse.unquote(svg_match.group(1))
-                            html_dir = str(Path(html_zip_path).parent)
+                            img_src = svg_match.group(1)
+                            html_dir = str(PurePosixPath(html_zip_path).parent)
                             return resolve_path(html_dir, img_src)
+                        logger.debug(f"EPUB cover page {html_zip_path} in {epub_path} contains no image reference")
+                    else:
+                        logger.debug(f"EPUB cover page {html_zip_path} not found in {epub_path}")
+                except Exception as e:
+                    logger.debug(f"EPUB cover page extraction failed for {html_href} in {epub_path}: {e}")
                 return None
 
             cover_zip_path = None
@@ -1408,6 +1417,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                                 break
 
             if confirmed_only and not cover_zip_path:
+                logger.debug(f"EPUB confirmed cover extraction failed for {epub_path}: no cover reference resolved in {rootfile_path}")
                 return False
 
             # 4. Any image item with "cover" in its ID or href
@@ -1448,9 +1458,16 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
                     with Path(dest_path).open("wb") as dest:
                         dest.write(z.read(matched_name))
                     return True
+                logger.debug(f"EPUB cover extraction failed for {epub_path}: cover image {cover_zip_path} not found in ZIP (confirmed_only={confirmed_only})")
+            else:
+                logger.debug(f"EPUB cover extraction failed for {epub_path}: no cover image found in {rootfile_path}")
         return False
 
-    return await asyncio.to_thread(_extract)
+    try:
+        return await asyncio.to_thread(_extract)
+    except Exception as e:
+        logger.debug(f"EPUB cover extraction failed for {epub_path} (confirmed_only={confirmed_only}): {e}")
+        return False
 
 
 async def extract_document_cover(path: str, dest_path: str) -> bool:
