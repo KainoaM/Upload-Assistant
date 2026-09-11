@@ -1352,7 +1352,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
             def is_image_item(href: str, media_type: str) -> bool:
                 if media_type.startswith("image/"):
                     return True
-                return href.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"))
+                return href.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
 
             def get_image_from_html(html_href: str) -> str | None:
                 with contextlib.suppress(Exception):
@@ -1421,7 +1421,7 @@ async def extract_epub_cover(epub_path: str, dest_path: str, confirmed_only: boo
             if not cover_zip_path and not confirmed_only:
                 for name in z.namelist():
                     base = Path(name).name.lower()
-                    if "cover" in base and base.endswith((".jpg", ".jpeg", ".png", ".webp", ".svg")):
+                    if "cover" in base and base.endswith((".jpg", ".jpeg", ".png", ".webp")):
                         cover_zip_path = name
                         break
 
@@ -1557,7 +1557,7 @@ async def prepare_book_cover(path: str, folder_id: str, base_dir: str, meta: Met
 
     if meta.audiobook:
         extracted_confirmed = await extract_embedded_cover_from_audiobook(meta, str(artwork_path), confirmed_only=True)
-        if extracted_confirmed:
+        if extracted_confirmed and is_valid_cover_image(artwork_path):
             meta.artwork_path = str(artwork_path)
             logger.debug("[green]Audiobook confirmed cover extracted. Skipping API download.[/green]")
             return str(artwork_path)
@@ -1568,7 +1568,7 @@ async def prepare_book_cover(path: str, folder_id: str, base_dir: str, meta: Met
             return str(artwork_path)
 
         extracted_unconfirmed = await extract_embedded_cover_from_audiobook(meta, str(artwork_path), confirmed_only=False)
-        if extracted_unconfirmed:
+        if extracted_unconfirmed and is_valid_cover_image(artwork_path):
             meta.artwork_path = str(artwork_path)
             return str(artwork_path)
         return None
@@ -1576,7 +1576,7 @@ async def prepare_book_cover(path: str, folder_id: str, base_dir: str, meta: Met
     extension = Path(path).suffix.lower().lstrip(".")
     if extension == "epub":
         extracted_confirmed = await extract_epub_cover(path, str(artwork_path), confirmed_only=True)
-        if extracted_confirmed:
+        if extracted_confirmed and is_valid_cover_image(artwork_path):
             meta.artwork_path = str(artwork_path)
             logger.debug("[green]EPUB confirmed cover extracted. Skipping API download.[/green]")
             return str(artwork_path)
@@ -1588,12 +1588,12 @@ async def prepare_book_cover(path: str, folder_id: str, base_dir: str, meta: Met
 
     if extension == "epub":
         extracted_unconfirmed = await extract_epub_cover(path, str(artwork_path), confirmed_only=False)
-        if extracted_unconfirmed:
+        if extracted_unconfirmed and is_valid_cover_image(artwork_path):
             meta.artwork_path = str(artwork_path)
             return str(artwork_path)
     elif extension in {"pdf", "cbr", "cbz"}:
         extracted_document_cover = await extract_document_cover(path, str(artwork_path))
-        if extracted_document_cover:
+        if extracted_document_cover and is_valid_cover_image(artwork_path):
             meta.artwork_path = str(artwork_path)
             return str(artwork_path)
 

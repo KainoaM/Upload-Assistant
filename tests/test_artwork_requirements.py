@@ -6,8 +6,10 @@ import pytest
 from PIL import Image
 
 from src.args import Args
-from src.artwork import is_valid_cover_image, prepare_artwork
+from src.artwork import _write_png, is_valid_cover_image, prepare_artwork
 from src.meta import Meta
+from src.prep import Prep
+from src.takescreens import prepare_book_cover
 from src.temp_paths import artwork_dir
 from src.trackerhandle import process_trackers
 from src.trackers.UNIT3D import UNIT3D
@@ -289,6 +291,82 @@ async def test_generic_artwork_cli_args_normalize_local_images(tmp_path: Path) -
     assert meta.artwork_banner_path == str(artwork / "POSTER_BANNER.png")
     assert Image.open(meta.artwork_path).format == "PNG"
     assert Image.open(meta.artwork_banner_path).format == "PNG"
+
+
+@pytest.mark.parametrize(("size", "expected"), [((2000, 3000), (1067, 1600)), ((300, 450), (300, 450))])
+def test_write_png_caps_dimensions_without_upscaling(tmp_path: Path, size: tuple[int, int], expected: tuple[int, int]) -> None:
+    source = tmp_path / "cover.jpg"
+    destination = tmp_path / "POSTER.png"
+    Image.new("RGB", size, "blue").save(source)
+
+    assert _write_png(source, destination)
+
+    with Image.open(destination) as cover:
+        assert cover.format == "PNG"
+        assert cover.size == expected
+        assert abs(cover.width - cover.height * size[0] / size[1]) <= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "explicit_poster", "expected_color"),
+    [("BOOK", False, (0, 0, 255)), ("BOOK", True, (255, 0, 0)), ("MOVIE", False, (0, 128, 0))],
+    ids=["embedded-book-cover", "explicit-book-poster", "movie-provider-cover"],
+)
+async def test_prep_artwork_source_precedence(tmp_path: Path, category: str, explicit_poster: bool, expected_color: tuple[int, int, int]) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    media = release / ("book.epub" if category == "BOOK" else "movie.mkv")
+    media.touch()
+    provider = tmp_path / "provider.png"
+    Image.new("RGB", (32, 48), "green").save(provider)
+    meta = Meta(category=category, path=str(media), base_dir=str(tmp_path), uuid="prep-artwork", artwork_url="https://metadata.example/cover.png", keep_images=True)
+    if explicit_poster:
+        poster = tmp_path / "explicit.png"
+        Image.new("RGB", (32, 48), "red").save(poster)
+        Args({"DEFAULT": {"screens": 4, "img_host_1": "imgbox"}}).parse([str(media), "--poster", str(poster)], meta)
+
+    def extract_cover(path: str, destination: str, confirmed_only: bool = False) -> bool:
+        assert path == str(media)
+        assert confirmed_only
+        Image.new("RGB", (32, 48), "blue").save(destination)
+        return True
+
+    prep = Prep.__new__(Prep)
+    prep.config = {"DEFAULT": {}}
+    prep.rehost_images_manager = Mock()
+    prep.rehost_images_manager.takescreens_manager.prepare_book_cover = prepare_book_cover
+    with (
+        patch("src.prep.prep_helpers.init_meta", return_value=(False, False, None, False, [], [])),
+        patch.object(Prep, "_publish_initial_webui_snapshot", new=AsyncMock()),
+        patch("src.prep.prep_helpers.detect_disc_and_category", new=AsyncMock(return_value=(str(media), {}))),
+        patch("src.prep.prep_helpers.process_media_files", new=AsyncMock(return_value=(media.name, media.name, str(media), "", "", {}, None))),
+        patch("src.prep.prep_helpers.calculate_source_size"),
+        patch("src.prep.prep_helpers.validate_media", new=AsyncMock()),
+        patch("src.prep.prep_helpers.process_trackers_and_torrent", new=AsyncMock()),
+        patch("src.prep.restart_early_artifact_tasks", new=AsyncMock()),
+        patch("src.prep.prep_helpers.search_metadata", new=AsyncMock()),
+        patch("src.prep.prep_helpers.finalize_metadata", new=AsyncMock()),
+        patch("src.prep.languages_manager.process_desc_language", new=AsyncMock()),
+        patch("src.takescreens.extract_epub_cover", new=AsyncMock(side_effect=extract_cover)) as extract,
+        patch("src.takescreens.download_artwork_from_meta", new=AsyncMock(return_value=False)) as book_download,
+        patch("src.artwork.is_public_http_url", return_value=True),
+        patch("src.artwork._download_public_image", new=AsyncMock(return_value=provider.read_bytes())) as download,
+    ):
+        assert await prep.gather_prep(meta, "cli") is meta
+
+    cover = artwork_dir(meta.base_dir, meta.uuid) / "POSTER.png"
+    assert meta.artwork_path == str(cover)
+    with Image.open(cover) as image:
+        assert image.format == "PNG"
+        assert image.getpixel((0, 0)) == expected_color
+    book_download.assert_not_awaited()
+    if category == "BOOK":
+        extract.assert_awaited_once_with(str(media), str(cover), confirmed_only=True)
+        download.assert_not_awaited()
+    else:
+        extract.assert_not_awaited()
+        download.assert_awaited_once_with(meta.artwork_url)
 
 
 @pytest.mark.asyncio
