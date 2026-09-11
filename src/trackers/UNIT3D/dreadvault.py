@@ -51,6 +51,7 @@ NON_INFORMATIVE_BOOK_TERMS = frozenset({
     "literary",
     "literature",
     "non-fiction",
+    "subject",
     "nonfiction",
     "young adult fiction",
 })
