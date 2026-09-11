@@ -12,6 +12,7 @@ from typing import Any, cast
 import cli_ui
 import click
 
+from src.book_prep import BOOK_EXTENSIONS
 from src.console import logger
 from src.meta import Meta
 
@@ -385,7 +386,8 @@ class QueueManager:
         paths: Sequence[str],
         base_dir: str,
     ) -> tuple[QueueList, str | None]:
-        allowed_extensions = [".mkv", ".mp4", ".ts"]
+        category = (meta.manual_category or meta.category).upper()
+        allowed_extensions = sorted(BOOK_EXTENSIONS) if category == "BOOK" else [".mkv", ".mp4", ".ts"]
         queue: list[Any] = []
 
         if meta.site_upload:
@@ -614,6 +616,12 @@ class QueueManager:
                     queue = await QueueManager.gather_files_recursive(path, allowed_extensions=allowed_extensions)
                 else:
                     queue = await QueueManager.resolve_queue_with_glob_or_split(path, paths, allowed_extensions=allowed_extensions)
+
+                if not queue:
+                    logger.warning(
+                        f"[yellow]Queue is empty after filtering {path}; check the category and use supported files: {', '.join(allowed_extensions)}.[/yellow]"
+                    )
+                    exit(1)
 
                 logger.info(f"[cyan]A new queue log file will be created:[/cyan] [green]{log_file}[/green]")
                 logger.info(f"[cyan]The new queue will contain {len(queue)} items.[/cyan]")

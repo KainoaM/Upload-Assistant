@@ -1,6 +1,6 @@
 # ruff: noqa: S101
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from PIL import Image
@@ -9,6 +9,7 @@ from src.args import Args
 from src.artwork import is_valid_cover_image, prepare_artwork
 from src.meta import Meta
 from src.temp_paths import artwork_dir
+from src.trackerhandle import process_trackers
 from src.trackers.UNIT3D import UNIT3D
 from upload import _prompt_book_meta, _prompt_music_meta
 import upload
@@ -152,8 +153,13 @@ async def test_book_artwork_does_not_search_parent_or_nested_directories(tmp_pat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("responses", [pytest.param(["", "", ""], id="empty"), pytest.param([EOFError()], id="eof")])
-async def test_book_artwork_retry_stops_without_input(tmp_path: Path, responses: list[str | Exception]) -> None:
+@pytest.mark.parametrize(
+    ("unattended", "responses"),
+    [(False, ["", "", ""]), (False, [EOFError()]), (True, [])],
+    ids=["empty", "eof", "unattended"],
+)
+@pytest.mark.parametrize("skip_mam", ["unset", "meta", "config"])
+async def test_book_artwork_retry_stops_without_input(tmp_path: Path, unattended: bool, responses: list[str | Exception], skip_mam: str) -> None:
     meta = Meta(
         category="BOOK",
         path=str(tmp_path),
@@ -166,16 +172,21 @@ async def test_book_artwork_retry_stops_without_input(tmp_path: Path, responses:
         book_language_iso="eng",
         imghost="imgbox",
         trackers=["TEST"],
-        unattended=False,
+        unattended=unattended,
+        book_skip_mam=skip_mam == "meta",
     )
     (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+    defaults = {"auto_mode": unattended}
+    if skip_mam == "config":
+        defaults["book_skip_mam"] = True
     with (
-        patch("upload.config", {"DEFAULT": {"auto_mode": False}, "TRACKERS": {}}),
+        patch("upload.config", {"DEFAULT": defaults, "TRACKERS": {}}),
         patch("upload.Prep") as prep,
         patch("upload.name_manager.get_name", new=AsyncMock(return_value=("Test Book", "Test Book", "Test Book", []))),
         patch("upload.gen_desc", new=AsyncMock(return_value=meta)),
         patch("upload.UploadHelper.get_confirmation", new=AsyncMock(return_value=True)),
         patch("upload.CLI_UI.ask_string", side_effect=[*responses, AssertionError("BOOK artwork prompt did not terminate")]) as prompt,
+        patch("upload.logger.info") as log,
     ):
         prep.return_value.gather_prep = AsyncMock(return_value=meta)
         assert await upload.process_meta(meta, str(tmp_path))
@@ -184,6 +195,39 @@ async def test_book_artwork_retry_stops_without_input(tmp_path: Path, responses:
     assert meta.trackers == []
     assert meta.artwork_path == ""
     assert meta.artwork_url == ""
+    messages = [call.args[0] for call in log.call_args_list if "no valid cover could be obtained" in call.args[0]]
+    assert len(messages) == 1
+    assert "--poster with a cover image path or URL" in messages[0]
+    assert ("book_skip_mam is enabled; disable it to try MAM cover lookup if you have a MAM account" in messages[0]) is (skip_mam != "unset")
+    assert "\n" not in messages[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip_mam", ["unset", "meta", "config"])
+@pytest.mark.parametrize("invalid_cover", [False, True])
+async def test_book_upload_guard_explains_missing_cover(tmp_path: Path, skip_mam: str, invalid_cover: bool) -> None:
+    meta = Meta(category="BOOK", trackers=["TEST"], tracker_status={"TEST": {"upload": True}}, book_skip_mam=skip_mam == "meta")
+    if invalid_cover:
+        cover = tmp_path / "cover.jpg"
+        cover.write_bytes(b"not an image")
+        meta.artwork_path = str(cover)
+    defaults = {"smart_image_host_selection": False}
+    if skip_mam == "config":
+        defaults["book_skip_mam"] = True
+    tracker = Mock()
+    with (
+        patch("src.trackerhandle.TrackerSetup.trackers_enabled", return_value=["TEST"]),
+        patch("src.trackerhandle.logger.info") as log,
+    ):
+        await process_trackers(meta, {"DEFAULT": defaults, "TRACKERS": {}}, None, ["TEST"], {"TEST": tracker}, [], [])
+
+    assert meta.tracker_status["TEST"]["upload"] is False
+    message = meta.tracker_status["TEST"]["status_message"]
+    assert "no valid BOOK cover could be obtained; supply --poster with a cover image path or URL" in message
+    assert ("book_skip_mam is enabled; disable it to try MAM cover lookup if you have a MAM account" in message) is (skip_mam != "unset")
+    assert "\n" not in message
+    log.assert_any_call(f"[yellow]TEST: {message}[/yellow]")
+    tracker.return_value.upload.assert_not_called()
 
 
 @pytest.mark.asyncio

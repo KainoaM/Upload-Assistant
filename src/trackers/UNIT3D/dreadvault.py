@@ -192,7 +192,7 @@ class DreadVault(UNIT3D):
     async def get_additional_checks(self, meta: Meta) -> bool:
         if meta.category == "BOOK":
             if meta.audiobook:
-                logger.info(f"{self.tracker}: [bold red]Audiobooks are not supported; DreadVault has no audiobook category. Skipping upload.[/bold red]")
+                logger.info(f"{self.tracker}: [bold red]Audiobooks are not supported; DreadVault has no audiobook category. Skipping upload; select a tracker that supports audiobooks.[/bold red]")
                 return False
             format_name = self._book_format(meta)
             if format_name not in ("PDF", "EPUB", "CBR"):
@@ -204,11 +204,20 @@ class DreadVault(UNIT3D):
 
         # substring per term: the horror signal is often a compound keyword
         searchable = {term.lower() for term in [*combined_genres, *keywords]}
-        if not any(horror_term in term for term in searchable for horror_term in HORROR_TERMS):
+        if not searchable and meta.category == "BOOK":
+            mam_hint = ""
+            if meta.book_skip_mam or self.config.get("DEFAULT", {}).get("book_skip_mam", False):
+                mam_hint = " book_skip_mam is enabled; disable it to try MAM genre lookup if you have a MAM account."
+            logger.warning(
+                f"{self.tracker}: [yellow]BOOK: no genre metadata is available (genres and keywords are empty); "
+                f"continuing on uploader responsibility. Verify that this book qualifies as horror.{mam_hint}[/yellow]"
+            )
+        elif not any(horror_term in term for term in searchable for horror_term in HORROR_TERMS):
             if not searchable:
                 logger.info(f"{self.tracker}: [bold red]Horror gate could not be evaluated because no genre metadata is available.[/bold red]")
             else:
-                logger.info(f"{self.tracker}: [bold red]Only horror content is allowed at {self.tracker}.[/bold red]")
+                remedy = " Verify this book's horror eligibility and re-run attended to confirm." if meta.category == "BOOK" else ""
+                logger.info(f"{self.tracker}: [bold red]Only horror content is allowed at {self.tracker}.{remedy}[/bold red]")
             if meta.unattended or not cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
                 return False
 
@@ -216,7 +225,8 @@ class DreadVault(UNIT3D):
         # only terms that never appear as TMDB keywords on legitimate horror
         adult_keywords = ["xxx", "porn", "adult", "hentai", "softcore"]
         if meta.adult_media or any(re.search(rf"(^|,\s*){re.escape(keyword)}(\s*,|$)", genres, re.IGNORECASE) for keyword in adult_keywords):
-            logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.[/bold red]")
+            remedy = " Verify this book's adult classification and re-run attended if incorrect." if meta.category == "BOOK" else ""
+            logger.info(f"{self.tracker}: [bold red]Porn/xxx is not allowed at {self.tracker}.{remedy}[/bold red]")
             if meta.unattended or not cli_ui.ask_yes_no("Do you want to upload anyway?", default=False):
                 return False
 

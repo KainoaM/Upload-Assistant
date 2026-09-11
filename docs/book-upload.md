@@ -42,7 +42,7 @@ $$\text{CLI Overrides} > \text{MyAnonamouse (MAM) API} > \text{Google Books API}
 
 Genres from accepted providers and embedded metadata are combined, so a broad category cannot hide a more specific subject. Explicit keyword overrides are preserved. Older cached provider records may lack these genres; `--no-metadata-cache` reads fresh provider data for that run.
 
-Tracker rules remain separate from book metadata gathering. DreadVault requires horror evidence for unattended uploads, including when `--unattended_confirm` is also set. Missing evidence skips the upload. Attended uploads warn and offer a default-no confirmation.
+Tracker rules remain separate from book metadata gathering. At DreadVault, books with no genres or keywords warn and continue on uploader responsibility; verify that the book qualifies as horror. When genre evidence exists but does not indicate horror, unattended uploads are skipped (including with `--unattended_confirm`), and attended uploads offer a default-no confirmation. Movies and TV still require evidence or attended confirmation.
 
 > [!IMPORTANT]
 > If `google_books_api_key` is not configured in your `config.py`, the terminal will display a warning message in red alerting you that book metadata searches will be limited and incomplete.

@@ -134,7 +134,10 @@ class TrackerStatusManager:
                             if not is_valid_book_language(str(val), str(iso)):
                                 book_missing.append(f)
                     if book_missing:
-                        logger.info(f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}[/yellow]")
+                        logger.info(
+                            f"[yellow]{tracker_name}: Skipping upload because required BOOK fields are missing: {', '.join(book_missing)}; "
+                            "re-run attended to enter them or supply -btitle / -author / -year / -blang.[/yellow]"
+                        )
                         local_tracker_status["skipped"] = True
 
                 # Check for missing required GAME fields in unattended mode

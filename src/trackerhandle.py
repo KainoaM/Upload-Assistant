@@ -166,8 +166,11 @@ async def process_trackers(
         if meta.category == "BOOK" and not is_valid_cover_image(meta.artwork_path):
             status = meta.tracker_status.setdefault(tracker, {})
             status["upload"] = False
-            status["status_message"] = "Skipped: BOOK uploads require a valid cover image"
-            logger.info(f"[yellow]{tracker}: skipped because BOOK uploads require a valid cover image.[/yellow]")
+            message = "Skipped: no valid BOOK cover could be obtained; supply --poster with a cover image path or URL."
+            if meta.book_skip_mam or config.get("DEFAULT", {}).get("book_skip_mam", False):
+                message += " book_skip_mam is enabled; disable it to try MAM cover lookup if you have a MAM account."
+            status["status_message"] = message
+            logger.info(f"[yellow]{tracker}: {message}[/yellow]")
             return
 
         async def check_bandwidth_and_dupes(tracker_name: str, t_class: Any) -> bool:

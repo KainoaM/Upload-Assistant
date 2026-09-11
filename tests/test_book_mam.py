@@ -237,7 +237,7 @@ def test_mam_tags_alone_are_not_genre_evidence():
     assert "keywords" not in metadata
 
 
-@pytest.mark.parametrize(("subjects", "accepted"), [(["Horrorroman"], True), (["Romance"], False), ([], False)])
+@pytest.mark.parametrize(("subjects", "accepted"), [(["Horrorroman"], True), (["Romance"], False), ([], True)])
 def test_no_isbn_book_uses_openlibrary_evidence_with_mam_skipped(book_lookup, subjects, accepted):
     lookup = book_lookup
     lookup.embedded.pop("isbn")

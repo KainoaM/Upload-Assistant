@@ -1240,7 +1240,10 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
         artwork_attempts = 1
         while not await _ensure_valid_book_artwork(meta):
             if meta.unattended or input_available is False or artwork_attempts >= 3:
-                logger.info("[yellow]BOOK upload: no valid cover could be obtained. Skipping all selected trackers.[/yellow]")
+                message = "BOOK upload: skipping all selected trackers because no valid cover could be obtained; supply --poster with a cover image path or URL."
+                if meta.book_skip_mam or config.get("DEFAULT", {}).get("book_skip_mam", False):
+                    message += " book_skip_mam is enabled; disable it to try MAM cover lookup if you have a MAM account."
+                logger.info(f"[yellow]{message}[/yellow]")
                 meta.trackers = []
                 break
             meta.artwork_path = ""
