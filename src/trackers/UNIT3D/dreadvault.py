@@ -42,6 +42,19 @@ HORROR_TERMS = frozenset({
     "zombie",
 })
 
+NON_INFORMATIVE_BOOK_TERMS = frozenset({
+    "books",
+    "ebook",
+    "fiction",
+    "general",
+    "juvenile fiction",
+    "literary",
+    "literature",
+    "non-fiction",
+    "nonfiction",
+    "young adult fiction",
+})
+
 
 class DreadVault(UNIT3D):
     """
@@ -204,12 +217,17 @@ class DreadVault(UNIT3D):
 
         # substring per term: the horror signal is often a compound keyword
         searchable = {term.lower() for term in [*combined_genres, *keywords]}
+        if meta.category == "BOOK":
+            searchable -= NON_INFORMATIVE_BOOK_TERMS
         if not searchable and meta.category == "BOOK":
+            reason = "no genre metadata is available (genres and keywords are empty)"
+            if combined_genres or keywords:
+                reason = "the only genre evidence is non-specific; the horror gate could not be evaluated"
             mam_hint = ""
             if meta.book_skip_mam or self.config.get("DEFAULT", {}).get("book_skip_mam", False):
                 mam_hint = " book_skip_mam is enabled; disable it to try MAM genre lookup if you have a MAM account."
             logger.warning(
-                f"{self.tracker}: [yellow]BOOK: no genre metadata is available (genres and keywords are empty); "
+                f"{self.tracker}: [yellow]BOOK: {reason}; "
                 f"continuing on uploader responsibility. Verify that this book qualifies as horror.{mam_hint}[/yellow]"
             )
         elif not any(horror_term in term for term in searchable for horror_term in HORROR_TERMS):

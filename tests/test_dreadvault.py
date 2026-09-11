@@ -140,6 +140,10 @@ def test_dreadvault_accepts_horror_taxonomy_from_book_subjects(field, subject):
         "Alien",
         "Cosmic",
         "Science fiction",
+        "Literary criticism",
+        "Romance",
+        "Western",
+        "Business",
         "Body",
         "Medical",
         "Gore",
@@ -199,10 +203,12 @@ def test_dreadvault_rejects_non_horror_when_unattended():
 
 
 @pytest.mark.parametrize("category", ["MOVIE", "TV"])
-def test_dreadvault_rejects_video_without_genre_metadata_when_unattended(category):
+@pytest.mark.parametrize("combined_genres", ["", "Fiction"])
+def test_dreadvault_rejects_video_without_horror_evidence_when_unattended(category, combined_genres, caplog):
     tracker = _tracker()
-    meta = Meta(category=category, combined_genres="", keywords=[], unattended=True)
+    meta = Meta(category=category, combined_genres=combined_genres, keywords=[], unattended=True)
     assert not asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
+    assert not any(record.levelname == "WARNING" for record in caplog.records)  # noqa: S101
 
 
 def test_dreadvault_only_blocks_exact_duplicates():
@@ -404,8 +410,14 @@ def test_dreadvault_audiobook_flag_preserves_movie_and_tv_horror_checks(category
         ("", [], True),
         ("  ,  ", ["", "  "], True),
         (["", "  "], [], True),
-        (["Juvenile Fiction"], [], False),
+        (["Juvenile Fiction"], [], True),
         (["Fiction / Horror"], [], True),
+        (["Fiction", "Romance"], [], False),
+        (["Fiction"], ["Romance"], False),
+        (["Romance"], ["Fiction"], False),
+        (["Fiction / Romance"], [], False),
+        (["Fiction", "Ghost stories"], [], True),
+        (["Fiction"], ["Ghost stories"], True),
     ],
 )
 def test_dreadvault_ebook_horror_checks_when_unattended(combined_genres, keywords, accepted, caplog):
@@ -414,43 +426,59 @@ def test_dreadvault_ebook_horror_checks_when_unattended(combined_genres, keyword
     assert asyncio.run(_tracker().get_additional_checks(meta)) is accepted  # noqa: S101
     if not combined_genres and not keywords:
         assert "no genre metadata is available" in caplog.text  # noqa: S101
+    if not accepted or "Ghost stories" in combined_genres or "Ghost stories" in keywords:
+        assert not any(record.levelname == "WARNING" for record in caplog.records)  # noqa: S101
 
 
+@pytest.mark.parametrize(
+    ("combined_genres", "keywords", "reason"),
+    [
+        (["", "  "], ["  "], "no genre metadata is available (genres and keywords are empty)"),
+        (["Fiction"], ["Fiction"], "the only genre evidence is non-specific; the horror gate could not be evaluated"),
+        (["Fiction", "General"], [], "the only genre evidence is non-specific; the horror gate could not be evaluated"),
+        ([], ["Nonfiction", "Non-fiction", "Literature", "Literary", "Juvenile fiction", "Young adult fiction", "Ebook", "Books"],
+         "the only genre evidence is non-specific; the horror gate could not be evaluated"),
+    ],
+)
 @pytest.mark.parametrize("unattended", [False, True])
 @pytest.mark.parametrize("skip_mam_source", [None, "cli", "config"])
-def test_dreadvault_book_without_genres_warns_and_continues(unattended, skip_mam_source, monkeypatch, caplog):
+def test_dreadvault_book_without_informative_genres_warns_and_continues(combined_genres, keywords, reason, unattended, skip_mam_source, monkeypatch, caplog):
     tracker = _tracker()
     tracker.config["DEFAULT"] = {"book_skip_mam": skip_mam_source == "config"}
-    meta = Meta(category="BOOK", type="EPUB", combined_genres=["", "  "], keywords=["  "], unattended=unattended, book_skip_mam=skip_mam_source == "cli")
+    meta = Meta(category="BOOK", type="EPUB", combined_genres=combined_genres, keywords=keywords, unattended=unattended, book_skip_mam=skip_mam_source == "cli")
     prompt = Mock(side_effect=AssertionError("Books without genre evidence must not prompt"))
     monkeypatch.setattr("src.trackers.UNIT3D.dreadvault.cli_ui.ask_yes_no", prompt)
 
     assert asyncio.run(tracker.get_additional_checks(meta))  # noqa: S101
 
-    messages = [record for record in caplog.records if "no genre metadata" in record.message]
+    messages = [record for record in caplog.records if "BOOK:" in record.message]
     assert len(messages) == 1  # noqa: S101
     assert messages[0].levelname == "WARNING"  # noqa: S101
-    assert "genres and keywords are empty" in messages[0].message  # noqa: S101
+    assert reason in messages[0].message  # noqa: S101
     assert "continuing on uploader responsibility" in messages[0].message  # noqa: S101
     assert "Verify that this book qualifies as horror" in messages[0].message  # noqa: S101
     assert ("book_skip_mam is enabled; disable it" in messages[0].message) is bool(skip_mam_source)  # noqa: S101
     prompt.assert_not_called()
 
 
-def test_dreadvault_book_without_genres_still_checks_adult_media():
-    meta = Meta(category="BOOK", type="EPUB", adult_media=True, unattended=True)
+@pytest.mark.parametrize("combined_genres", ["", ["Fiction"], ["Fiction", "General"]])
+def test_dreadvault_book_without_informative_genres_still_checks_adult_media(combined_genres, caplog):
+    meta = Meta(category="BOOK", type="EPUB", combined_genres=combined_genres, adult_media=True, unattended=True)
 
     assert not asyncio.run(_tracker().get_additional_checks(meta))  # noqa: S101
+    assert "Porn/xxx" in caplog.text  # noqa: S101
 
 
 @pytest.mark.parametrize("category", ["MOVIE", "TV"])
+@pytest.mark.parametrize("combined_genres", ["", "Fiction"])
 @pytest.mark.parametrize("response", [False, True])
-def test_dreadvault_video_without_genres_requires_attended_override(category, response, monkeypatch):
-    meta = Meta(category=category, unattended=False)
+def test_dreadvault_video_without_horror_evidence_requires_attended_override(category, combined_genres, response, monkeypatch, caplog):
+    meta = Meta(category=category, combined_genres=combined_genres, unattended=False)
     prompt = Mock(return_value=response)
     monkeypatch.setattr("src.trackers.UNIT3D.dreadvault.cli_ui.ask_yes_no", prompt)
 
     assert asyncio.run(_tracker().get_additional_checks(meta)) is response  # noqa: S101
+    assert not any(record.levelname == "WARNING" for record in caplog.records)  # noqa: S101
     prompt.assert_called_once_with("Do you want to upload anyway?", default=False)
 
 
@@ -464,6 +492,9 @@ def test_dreadvault_video_without_genres_requires_attended_override(category, re
         ({"combined_genres": ["Ghost stories"], "keywords": ["porn"]}, "Porn/xxx"),
         ({"combined_genres": ["Vampires"], "keywords": ["xxx"]}, "Porn/xxx"),
         ({"combined_genres": ["Occult fiction"], "adult_media": True}, "Porn/xxx"),
+        ({"combined_genres": ["Fiction", "Ghost stories"], "keywords": ["porn"]}, "Porn/xxx"),
+        ({"combined_genres": ["Fiction", "Ghost stories"], "keywords": ["xxx"]}, "Porn/xxx"),
+        ({"combined_genres": ["Fiction"], "adult_media": True}, "Porn/xxx"),
     ],
 )
 @pytest.mark.parametrize(
