@@ -234,7 +234,8 @@ class Prep:
         # 8. Set Final Metadata and tags
         await prep_helpers.finalize_metadata(self, meta, videopath, bdinfo, mi, filename, untouched_filename, video)
 
-        await prepare_artwork(meta)
+        if meta.category != "BOOK":
+            await prepare_artwork(meta)
 
         if meta.category == "XXX":
             await self.takescreens_manager.xxx_fallback_cover(meta.filelist or [], meta.uuid, meta.base_dir, meta)
