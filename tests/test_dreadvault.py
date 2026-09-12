@@ -535,7 +535,7 @@ def test_dreadvault_formats_dvdrip_with_resolution_and_encode_after_audio():
 
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
-    assert name == "Example Movie 2001 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
+    assert name == "Example Movie 2001 576p DVDRip DD 2.0 x264-GRP"  # noqa: S101
 
 
 def test_dreadvault_names_a_dvd_sourced_encode_as_a_dvdrip():
@@ -554,13 +554,15 @@ def test_dreadvault_names_a_dvd_sourced_encode_as_a_dvdrip():
     assert name == "Ghost 1984 480p DVDRip DD 2.0 x264-SaL"  # noqa: S101
 
 
-def test_dreadvault_keeps_episode_and_edition_on_a_dvd_sourced_encode():
+def test_dreadvault_keeps_the_episode_on_a_dvd_sourced_encode():
     meta = Meta(
         name="Example Show 1989 S04E02 Unrated REPACK 480p PAL DD 2.0 x264-GRP",
         category="TV",
         type="ENCODE",
         source="PAL",
         resolution="480p",
+        edition="Unrated",
+        repack="REPACK",
         video_encode="x264",
         audio="DD 2.0",
         language_checked=True,
@@ -568,7 +570,58 @@ def test_dreadvault_keeps_episode_and_edition_on_a_dvd_sourced_encode():
 
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
-    assert name == "Example Show 1989 S04E02 Unrated REPACK 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
+    assert name == "Example Show 1989 S04E02 576p DVDRip DD 2.0 x264-GRP"  # noqa: S101
+
+
+def test_dreadvault_states_the_pal_line_count_on_a_cropped_dvdrip():
+    meta = Meta(
+        name="Stage Fright 1997 PAL x264 DVDRip DD 2.0-GRP",
+        type="DVDRIP",
+        source="PAL",
+        resolution="480p",
+        video_encode=" x264",
+        audio="DD 2.0",
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Stage Fright 1997 576p DVDRip DD 2.0 x264-GRP"  # noqa: S101
+
+
+def test_dreadvault_states_the_pal_line_count_on_a_dvd_sourced_encode_with_a_marker():
+    meta = Meta(
+        name="Example Movie 2022 480p PAL DD 2.0 x264-GRP",
+        type="ENCODE",
+        source="PAL",
+        resolution="480p",
+        video_encode="x264",
+        audio="DD 2.0",
+        audio_languages=["Italian"],
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Example Movie 2022 ITALIAN 576p DVDRip DD 2.0 x264-GRP"  # noqa: S101
+
+
+def test_dreadvault_drops_edition_and_repack_from_a_dvd_sourced_encode():
+    meta = Meta(
+        name="Example Movie 1994 Uncut REPACK3 480p NTSC DD 5.1 x264-GRP",
+        type="ENCODE",
+        source="NTSC",
+        resolution="480p",
+        edition="Uncut",
+        repack="REPACK3",
+        video_encode="x264",
+        audio="DD 5.1",
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Example Movie 1994 480p DVDRip DD 5.1 x264-GRP"  # noqa: S101
 
 
 def test_dreadvault_formats_hi10p_dvdrip_with_encode_after_audio():
@@ -584,7 +637,7 @@ def test_dreadvault_formats_hi10p_dvdrip_with_encode_after_audio():
 
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
-    assert name == "Example Movie 2001 480p DVDRip DD 2.0 Hi10P x264-GRP"  # noqa: S101
+    assert name == "Example Movie 2001 576p DVDRip DD 2.0 Hi10P x264-GRP"  # noqa: S101
 
 
 def test_dreadvault_preserves_title_spaces_when_dvdrip_source_and_encode_are_empty():

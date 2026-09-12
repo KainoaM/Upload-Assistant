@@ -160,9 +160,17 @@ class DreadVault(UNIT3D):
         if meta.no_year:
             year = ""
 
+        # C12: an SD title states the source standard's line count, PAL 576 or NTSC 480, not the cropped height.
+        if resolution[:-1] in ("480", "576") and ("PAL" in source or "NTSC" in source):
+            resolution = ("576" if "PAL" in source else "480") + resolution[-1]
+
         if name_type == "ENCODE" and source in ("NTSC", "PAL"):
-            # get_source only yields a bare NTSC/PAL on a DVD-sourced encode; the site calls that a DVDRip.
-            dreadvault_name = dreadvault_name.replace(f"{resolution} {source} ", f"{resolution} DVDRip ", 1)
+            # get_source only yields a bare NTSC/PAL on a DVD-sourced encode; the site calls that a DVDRip,
+            # and a DVDRip title carries no cut/edition and no repack.
+            dreadvault_name = dreadvault_name.replace(f"{meta.resolution} {source} ", f"{resolution} DVDRip ", 1)
+            for token in (meta.edition, meta.repack):
+                if token:
+                    dreadvault_name = dreadvault_name.replace(f" {token} ", " ", 1)
 
         if name_type == "DVDRIP":
             source = "DVDRip"
@@ -207,7 +215,7 @@ class DreadVault(UNIT3D):
             elif meta.is_disc != "BDMV":
                 # get_name drops the resolution token when it is OTHER; the next slot anchors the marker:
                 # the service on a web release, the source everywhere else.
-                for anchor in (meta.resolution, str(meta.service), source):
+                for anchor in (resolution, str(meta.service), source):
                     if anchor and anchor in dreadvault_name:
                         dreadvault_name = dreadvault_name.replace(anchor, f"{foreign_lang} {anchor}", 1)
                         break
