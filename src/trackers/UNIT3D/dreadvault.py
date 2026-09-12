@@ -160,14 +160,10 @@ class DreadVault(UNIT3D):
         if meta.no_year:
             year = ""
 
-        # C12: an SD title states the source standard's line count, PAL 576 or NTSC 480, not the cropped height.
-        if resolution[:-1] in ("480", "576") and ("PAL" in source or "NTSC" in source):
-            resolution = ("576" if "PAL" in source else "480") + resolution[-1]
-
         if name_type == "ENCODE" and source in ("NTSC", "PAL"):
             # get_source only yields a bare NTSC/PAL on a DVD-sourced encode; the site calls that a DVDRip,
             # and a DVDRip title carries no cut/edition and no repack.
-            dreadvault_name = dreadvault_name.replace(f"{meta.resolution} {source} ", f"{resolution} DVDRip ", 1)
+            dreadvault_name = dreadvault_name.replace(f"{resolution} {source} ", f"{resolution} DVDRip ", 1)
             for token in (meta.edition, meta.repack):
                 if token:
                     dreadvault_name = dreadvault_name.replace(f" {token} ", " ", 1)
