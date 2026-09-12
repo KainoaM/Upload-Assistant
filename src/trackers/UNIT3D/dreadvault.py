@@ -160,7 +160,7 @@ class DreadVault(UNIT3D):
         if meta.no_year:
             year = ""
 
-        if name_type == "ENCODE" and not meta.is_disc and source in ("NTSC", "PAL"):
+        if name_type == "ENCODE" and source in ("NTSC", "PAL"):
             # get_source only yields a bare NTSC/PAL on a DVD-sourced encode; the site calls that a DVDRip.
             dreadvault_name = dreadvault_name.replace(f"{resolution} {source} ", f"{resolution} DVDRip ", 1)
 
@@ -197,7 +197,7 @@ class DreadVault(UNIT3D):
         audio_languages: list[str] = [
             language
             for language in meta.audio_languages or []
-            if language.lower() not in {"no", "no linguistic content", "zxx", "und", "undetermined"}
+            if language.lower() not in {"no", "zxx", "und", "undetermined"}
         ]
         if audio_languages and not await languages_manager.has_english_language(audio_languages):
             foreign_lang = audio_languages[0].upper()
