@@ -179,17 +179,6 @@ class DreadVault(UNIT3D):
             if encode_token:
                 dreadvault_name = dreadvault_name.replace((meta.audio), f"{meta.audio} {encode_token}", 1)
 
-        elif meta.is_disc == "DVD":
-            region_and_source = " ".join(part for part in (meta.region, source) if part)
-            disc_details = " ".join(part for part in (resolution, meta.region, source) if part)
-            if region_and_source:
-                dreadvault_name = dreadvault_name.replace(region_and_source, disc_details, 1)
-            dreadvault_name = dreadvault_name.replace((meta.audio), f"{video_codec} {meta.audio}", 1)
-
-        elif name_type == "REMUX" and source in ("PAL DVD", "NTSC DVD", "DVD"):
-            dreadvault_name = dreadvault_name.replace(meta.source or "", f"{resolution} {meta.source}", 1)
-            dreadvault_name = dreadvault_name.replace((meta.audio), f"{video_codec} {meta.audio}", 1)
-
         if alt_title and year:
             dreadvault_name = dreadvault_name.replace(f"{year} {alt_title}", f"{alt_title} {year}", 1)
 
@@ -211,7 +200,7 @@ class DreadVault(UNIT3D):
             elif meta.is_disc != "BDMV":
                 # get_name drops the resolution token when it is OTHER; the next slot anchors the marker:
                 # the service on a web release, the source everywhere else.
-                for anchor in (resolution, str(meta.service), source):
+                for anchor in (resolution, str(meta.service), meta.region, source):
                     if anchor and anchor in dreadvault_name:
                         dreadvault_name = dreadvault_name.replace(anchor, f"{foreign_lang} {anchor}", 1)
                         break
