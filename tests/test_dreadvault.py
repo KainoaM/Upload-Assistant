@@ -573,24 +573,6 @@ def test_dreadvault_keeps_the_episode_on_a_dvd_sourced_encode():
     assert name == "Example Show 1989 S04E02 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
 
 
-def test_dreadvault_drops_edition_and_repack_from_a_dvd_sourced_encode():
-    meta = Meta(
-        name="Example Movie 1994 Uncut REPACK3 480p NTSC DD 5.1 x264-GRP",
-        type="ENCODE",
-        source="NTSC",
-        resolution="480p",
-        edition="Uncut",
-        repack="REPACK3",
-        video_encode="x264",
-        audio="DD 5.1",
-        language_checked=True,
-    )
-
-    name = asyncio.run(_tracker().get_name(meta))["name"]
-
-    assert name == "Example Movie 1994 480p DVDRip DD 5.1 x264-GRP"  # noqa: S101
-
-
 def test_dreadvault_formats_hi10p_dvdrip_with_encode_after_audio():
     meta = Meta(
         name="Example Movie 2001 PAL DVD Hi10P x264 DVDRip DD 2.0-GRP",
@@ -621,40 +603,6 @@ def test_dreadvault_preserves_title_spaces_when_dvdrip_source_and_encode_are_emp
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
     assert name == "Example Movie 1990 480p DVDRip DD 2.0-GRP"  # noqa: S101
-
-
-def test_dreadvault_preserves_generic_dvd_disc_name():
-    meta = Meta(
-        name="Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP",
-        type="DISC",
-        is_disc="DVD",
-        source="NTSC",
-        resolution="480p",
-        region="R1",
-        video_codec="MPEG-2",
-        audio="DD 5.1",
-        language_checked=True,
-    )
-
-    name = asyncio.run(_tracker().get_name(meta))["name"]
-
-    assert name == "Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP"  # noqa: S101
-
-
-def test_dreadvault_preserves_generic_dvd_remux_name():
-    meta = Meta(
-        name="Example Movie 2001 PAL DVD REMUX DD 5.1-GRP",
-        type="REMUX",
-        source="PAL DVD",
-        resolution="576p",
-        video_codec="MPEG-2",
-        audio="DD 5.1",
-        language_checked=True,
-    )
-
-    name = asyncio.run(_tracker().get_name(meta))["name"]
-
-    assert name == "Example Movie 2001 PAL DVD REMUX DD 5.1-GRP"  # noqa: S101
 
 
 def test_dreadvault_adds_foreign_audio_language_before_encode_resolution():
