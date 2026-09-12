@@ -160,6 +160,10 @@ class DreadVault(UNIT3D):
         if meta.no_year:
             year = ""
 
+        if name_type == "ENCODE" and not meta.is_disc and source in ("NTSC", "PAL"):
+            # get_source only yields a bare NTSC/PAL on a DVD-sourced encode; the site calls that a DVDRip.
+            dreadvault_name = dreadvault_name.replace(f"{resolution} {source} ", f"{resolution} DVDRip ", 1)
+
         if name_type == "DVDRIP":
             source = "DVDRip"
             encode_token = video_encode.strip()

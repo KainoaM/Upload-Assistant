@@ -538,6 +538,39 @@ def test_dreadvault_formats_dvdrip_with_resolution_and_encode_after_audio():
     assert name == "Example Movie 2001 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
 
 
+def test_dreadvault_names_a_dvd_sourced_encode_as_a_dvdrip():
+    meta = Meta(
+        name="Ghost 1984 480p NTSC DD 2.0 x264-SaL",
+        type="ENCODE",
+        source="NTSC",
+        resolution="480p",
+        video_encode="x264",
+        audio="DD 2.0",
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Ghost 1984 480p DVDRip DD 2.0 x264-SaL"  # noqa: S101
+
+
+def test_dreadvault_keeps_episode_and_edition_on_a_dvd_sourced_encode():
+    meta = Meta(
+        name="Example Show 1989 S04E02 Unrated REPACK 480p PAL DD 2.0 x264-GRP",
+        category="TV",
+        type="ENCODE",
+        source="PAL",
+        resolution="480p",
+        video_encode="x264",
+        audio="DD 2.0",
+        language_checked=True,
+    )
+
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+
+    assert name == "Example Show 1989 S04E02 Unrated REPACK 480p DVDRip DD 2.0 x264-GRP"  # noqa: S101
+
+
 def test_dreadvault_formats_hi10p_dvdrip_with_encode_after_audio():
     meta = Meta(
         name="Example Movie 2001 PAL DVD Hi10P x264 DVDRip DD 2.0-GRP",
