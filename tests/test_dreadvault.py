@@ -778,8 +778,6 @@ def test_dreadvault_adds_foreign_audio_language_after_year_for_dvd_remux():
     assert name == "Example Movie 2001 JAPANESE PAL DVD REMUX DD 5.1-GRP"  # noqa: S101
 
 
-<<<<<<< ours
-=======
 def test_dreadvault_adds_foreign_audio_language_before_source_for_yearless_dvd_remux():
     meta = Meta(
         name="Example Movie PAL DVD REMUX DD 2.0-GRP",
@@ -798,7 +796,6 @@ def test_dreadvault_adds_foreign_audio_language_before_source_for_yearless_dvd_r
     assert name == "Example Movie JAPANESE PAL DVD REMUX DD 2.0-GRP"  # noqa: S101
 
 
->>>>>>> theirs
 def test_dreadvault_never_adds_trump_suffix_for_exact_match():
     meta = Meta(
         name="Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
@@ -824,8 +821,6 @@ def test_dreadvault_moves_tv_aka_before_year():
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
     assert name == "Example Show AKA Alternate Show 2024 S01 1080p WEB-DL"  # noqa: S101
-<<<<<<< ours
-=======
 
 
 def test_dreadvault_moves_tv_aka_before_year_with_foreign_audio_language():
@@ -847,4 +842,3 @@ def test_dreadvault_moves_tv_aka_before_year_with_foreign_audio_language():
     name = asyncio.run(_tracker().get_name(meta))["name"]
 
     assert name == "Example Show AKA Alt Show 2024 JAPANESE S01 PAL DVD REMUX DD 2.0-GRP"  # noqa: S101
->>>>>>> theirs
