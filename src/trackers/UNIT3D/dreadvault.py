@@ -160,7 +160,7 @@ class DreadVault(UNIT3D):
             year = ""
 
         if name_type == "ENCODE" and source in ("NTSC", "PAL"):
-            # get_source leaves a bare NTSC/PAL only on a DVD-sourced encode; the site titles that DVDRip.
+            # For an ENCODE, get_source returns a bare NTSC/PAL only for DVD sources; the site titles that DVDRip.
             dvd_tokens = " ".join(f"{meta.edition} {meta.repack} {resolution} {source}".split())
             dreadvault_name = dreadvault_name.replace(dvd_tokens, f"{resolution} DVDRip", 1)
 
@@ -171,7 +171,8 @@ class DreadVault(UNIT3D):
                 dreadvault_name = dreadvault_name.replace(f"{meta.source} ", "", 1)
             if encode_token:
                 dreadvault_name = dreadvault_name.replace(f" {encode_token}", "", 1)
-                dreadvault_name = dreadvault_name.replace((meta.audio), f"{meta.audio} {encode_token}", 1)
+                anchor = meta.audio or source
+                dreadvault_name = dreadvault_name.replace(anchor, f"{anchor} {encode_token}", 1)
             dreadvault_name = dreadvault_name.replace(f"{source}", f"{resolution} {source}", 1)
 
         if alt_title and year:
